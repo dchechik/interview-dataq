@@ -30,12 +30,12 @@ class DuckPartWriter(PartWriter):
         self.table = table
         self.stage = f"_stage_{table}"
         self.schema = schema
-        cols = ", ".join(
-            f"{quote_ident(f.name)} {_arrow_to_duck(f.type)}" for f in schema
-        )
+        cols = [f"{quote_ident(f.name)} {_arrow_to_duck(f.type)}" for f in schema]
+        # A zero-column schema is legal (an empty source produces one), but
+        # "CREATE TABLE t ()" is not, so the part marker carries the table alone.
         self.conn.execute(
             f"CREATE TABLE IF NOT EXISTS {quote_ident(self.stage)} "
-            f"({cols}, {PART_COL} INTEGER)"
+            f"({', '.join([*cols, f'{PART_COL} INTEGER'])})"
         )
 
     def committed_parts(self) -> int:
@@ -84,7 +84,13 @@ class DuckPartWriter(PartWriter):
         return StoredRef(backend="duckdb", location=self.table, parts=1, rows=int(rows))
 
     def abort(self) -> None:
-        self.conn.execute(f"DROP TABLE IF EXISTS {quote_ident(self.stage)}")
+        """Discard in-flight work only -- committed parts must survive.
+
+        Each ``write_part`` is a single INSERT, so there is no torn part to clean
+        up, and the staging table is exactly what a later resume reads. Dropping it
+        here would silently destroy the checkpoints that make resume possible.
+        """
+        return
 
 
 def _arrow_to_duck(t: pa.DataType) -> str:

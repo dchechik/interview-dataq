@@ -97,11 +97,14 @@ def run_streaming_transform(
 
     scan_sql = f"SELECT * FROM {source_sql}"
     if resume_rows:
-        # LIMIT is required before OFFSET in DuckDB; -1 means "all remaining".
-        scan_sql += f" LIMIT -1 OFFSET {int(resume_rows)}"
+        scan_sql += f" OFFSET {int(resume_rows)}"
         ctx.log(f"{plugin.id}: resuming from row {resume_rows} (part {resume_parts})")
 
-    reader = conn.sql(scan_sql).to_arrow_reader(settings.batch_rows)
+    # The scan gets its own cursor. A DuckDB connection holds one active result at
+    # a time, so writes (the part writer, the external result cache) issued on the
+    # same connection while streaming would silently truncate the reader.
+    read_conn = conn.cursor()
+    reader = read_conn.sql(scan_sql).to_arrow_reader(settings.batch_rows)
 
     external_runner = None
     if plugin.mode == "external":
@@ -140,9 +143,12 @@ def run_streaming_transform(
                 buffer = []
                 ctx.checkpoint(part, rows_done)
         if writer is None:
-            # Empty source: still produce a valid, empty version.
-            writer = storage.open_writer(ref, pa.schema([]), conn)
-            writer.discard_from(part)
+            # The source yielded no batches at all. Materialise an empty version
+            # with the source's schema rather than opening a zero-column writer,
+            # which is not expressible as a table.
+            stored = storage.write_relation(ref, f"SELECT * FROM ({scan_sql}) WHERE false", conn)
+            ctx.progress(rows_done, force=True)
+            return ExecResult(stored=stored, rows=0)
         if buffer:
             writer.write_part(part, buffer)
             part += 1
@@ -153,6 +159,7 @@ def run_streaming_transform(
             writer.abort()
         raise
     finally:
+        read_conn.close()
         if external_runner is not None:
             loop.close()
 
