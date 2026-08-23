@@ -1,0 +1,46 @@
+DataQ is a project to make analysis of medium-to-large (1G to 10G datasets) easy for non-technical users.
+
+
+Example uses cases:
+ - Analyze IMDB movie and cast data
+ - analyze NYC taxi dataset and find the most popular locations. Join it to info about businesses by lat long and find the categories of businesses that get the most taxis on a Thursday night.
+ - Plug in cybersecurity datasets and build traces of user behavior. Annotate each trace with how common the attributes of the event are (e.g. how common a login from france is)
+
+
+The project supports:
+- Import of a dataset from a variety of formats (CSV, parquet, etc)
+- Storage of dataset in an easy to query, static store. Suggestion is to use DuckDB
+- Run and explore the service + dataset on a local laptop, or host on an easy to use host (e.g. Railway or similar). In thatc case DB is hosted on the services or perhaps queries files on s3 directly.
+- Pluggalbe APIs for all methods. We want the APIs to be accessible by an AI agent running within the app for user queries.
+- Pluggable visualization of a variety of methods to explore the data:
+  - Simple queries( SQL-like or filter based language interface)
+  - Basic charts (distributions, histograms, etc)
+  - Map-based visualizations for geo data
+  - Animated chrts (similar to Trendalyzer ted talk)
+
+How pluggability should work:
+- Datasets go through phases:
+  - Import: import and normalize the data. support pluggable components for normalizing. e.g. clean and define types for IP address,
+    - Import of full text data can support other pluggable components, e.g, entity extraction with a small local LLM model or other model
+    - Or it can b e code.
+  - Aggregation:
+    - Datasets can be aggregated to create *supporting* aggregate datasets.
+    - Pluggable configuration should allow the tool to automatically suggest aggregates for the user.
+  - Extraction:
+    - Full tetx datastes (e.g. gutenberg data) can have a background extracrtion process run on it. Example could be extracting character names and pages they appear on for each book.
+  - Joins: datasets can be joined together. We define well-defined types for each column (e.g a string column can be a 'country') to allow joins by these to other datasets to be suggested automatically
+
+User flow:
+1. Import a dataset
+  - Preview and suggest normalization
+  - Store it
+2. Basic visualization and querying supported on top
+3. A user may suggest other actions (extraction, aggregation, etc)
+4. A user saves a variety of dashboards. Dashboards are types of visualization components connected together. Default visualization components are suggested based on the data shape.
+5. A user may ask an AI agent to use the available APIs (query, aggregate, transform, join, visualize) to perform analysis and output reports with dashboards. Analysis agents can create new aggregates.
+
+
+System structure:
+- Everything available through API to AI agent or UI tooling
+- Checkpoints made from data.
+- All data is well structured. MEtadata layer defines the types of columns and how they relate across datasets.
