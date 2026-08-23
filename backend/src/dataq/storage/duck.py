@@ -115,10 +115,12 @@ class DuckDBTableStorage(StorageBackend):
     def _table(self, ref: VersionRef) -> str:
         return f"ds_{ref.dataset_id}__v{ref.version}"
 
-    def write_relation(self, ref: VersionRef, rel_sql: str, conn) -> StoredRef:
+    def write_relation(
+        self, ref: VersionRef, rel_sql: str, conn, params: list | None = None
+    ) -> StoredRef:
         table = self._table(ref)
         conn.execute(f"DROP TABLE IF EXISTS {quote_ident(table)}")
-        conn.execute(f"CREATE TABLE {quote_ident(table)} AS {rel_sql}")
+        conn.execute(f"CREATE TABLE {quote_ident(table)} AS {rel_sql}", params or [])
         rows = conn.execute(f"SELECT count(*) FROM {quote_ident(table)}").fetchone()[0]
         return StoredRef(backend="duckdb", location=table, parts=1, rows=int(rows))
 

@@ -83,7 +83,9 @@ class ParquetStorage(StorageBackend):
     def _dir(self, ref: VersionRef) -> Path:
         return self.base / ref.dataset_id / f"v{ref.version}"
 
-    def write_relation(self, ref: VersionRef, rel_sql: str, conn) -> StoredRef:
+    def write_relation(
+        self, ref: VersionRef, rel_sql: str, conn, params: list | None = None
+    ) -> StoredRef:
         d = self._dir(ref)
         if d.exists():
             shutil.rmtree(d)
@@ -91,7 +93,8 @@ class ParquetStorage(StorageBackend):
         target = d / "part-00000.parquet"
         conn.execute(
             f"COPY ({rel_sql}) TO {_sql_str(str(target))} "
-            "(FORMAT PARQUET, COMPRESSION ZSTD)"
+            "(FORMAT PARQUET, COMPRESSION ZSTD)",
+            params or [],
         )
         rows = pq.ParquetFile(target).metadata.num_rows if target.exists() else 0
         return StoredRef(

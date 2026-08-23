@@ -107,7 +107,8 @@ class NormalizeCountry(Transform):
 
     def sql(self, ctx: TransformCtx) -> SqlPlan:
         p: CountryParams = ctx.params
-        return SqlPlan(add={f"{p.column}{p.suffix}": f"upper(trim(CAST({ctx.col(p.column)} AS VARCHAR)))"})
+        expr = f"upper(trim(CAST({ctx.col(p.column)} AS VARCHAR)))"
+        return SqlPlan(add={f"{p.column}{p.suffix}": expr})
 
 
 class NumericParams(ColumnParams):

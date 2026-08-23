@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from dataq.query.compiler import CompiledQuery, QueryCompiler, QueryError, ResolvedSource
+from dataq.query.compiler import QueryCompiler, QueryError, ResolvedSource
 from dataq.query.spec import Filter, QuerySpec, Select, Sort, TimeBucket
 
 SRC = ResolvedSource(

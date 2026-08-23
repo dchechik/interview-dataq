@@ -192,8 +192,8 @@ class ExternalRunner:
                 *[self._run_chunk([rows[i] for i in c], ext, sem) for c in chunks]
             )
             fresh: list[tuple[str, dict]] = []
-            for c, out in zip(chunks, gathered):
-                for idx, res in zip(c, out):
+            for c, out in zip(chunks, gathered, strict=True):
+                for idx, res in zip(c, out, strict=True):
                     results[idx] = res
                     fresh.append((keys[idx], res))
             self.cache.put_many(self.plugin.id, fresh)

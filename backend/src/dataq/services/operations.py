@@ -16,8 +16,8 @@ from ..jobs.context import JobCtx
 from ..jobs.executor import run_transform
 from ..plugins.base import REGISTRY
 from ..plugins.builtin.readers import pick_reader
-from ..query.compiler import quote_ident
 from ..plugins.kinds import AggregateCtx, Aggregator, Reader, Transform
+from ..query.compiler import quote_ident
 from ..storage.base import VersionRef
 from .context import AppContext
 from .model import make_model_client
@@ -109,7 +109,7 @@ def run_import(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
         rel = reader.to_relation(conn, req.uri, params)
         view = f"_dq_import_{job_ctx.step_id}"
         rel.create_view(view, replace=True)
-        columns = list(zip(rel.columns, [str(t) for t in rel.types]))
+        columns = list(zip(rel.columns, [str(t) for t in rel.types], strict=True))
 
         dataset = ctx.catalog.create_dataset(
             name=name, kind="source", source_uri=req.uri
@@ -176,7 +176,7 @@ def run_transform_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) ->
             )
         source = ctx.storage.sql_source(result.stored)
         rel = conn.sql(f"SELECT * FROM {source} LIMIT 0")
-        columns = list(zip(rel.columns, [str(t) for t in rel.types]))
+        columns = list(zip(rel.columns, [str(t) for t in rel.types], strict=True))
 
         version = ctx.catalog.add_version(
             dataset_id=inp.dataset_id, version=new_version, stored=result.stored,
@@ -222,7 +222,8 @@ def run_aggregate_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) ->
         agg_sql = f"SELECT *, {derived} FROM ({agg_sql}) _agg"
 
     src_name = ctx.catalog.get_dataset(inp.dataset_id)
-    out_name = req.output_name or f"{src_name.name if src_name else 'ds'}_{plugin.id.split('.')[-1]}"
+    base = src_name.name if src_name else "ds"
+    out_name = req.output_name or f"{base}_{plugin.id.split('.')[-1]}"
 
     dataset = ctx.catalog.create_dataset(
         name=out_name, kind="aggregate",
@@ -231,10 +232,10 @@ def run_aggregate_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) ->
     ref = VersionRef(dataset_id=dataset.id, version=1)
     with ctx.warehouse.cur() as conn:
         with ctx.warehouse.ddl_lock:
-            stored = ctx.storage.write_relation(ref, agg_sql, conn)
+            stored = ctx.storage.write_relation(ref, agg_sql, conn, compiled.params)
         source = ctx.storage.sql_source(stored)
         rel = conn.sql(f"SELECT * FROM {source} LIMIT 0")
-        columns = list(zip(rel.columns, [str(t) for t in rel.types]))
+        columns = list(zip(rel.columns, [str(t) for t in rel.types], strict=True))
         version = ctx.catalog.add_version(
             dataset_id=dataset.id, version=1, stored=stored,
             columns_schema=[{"name": n, "physical_type": t} for n, t in columns],
@@ -311,7 +312,7 @@ def run_join_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
             stored = ctx.storage.write_relation(ref, sql, conn)
         source = ctx.storage.sql_source(stored)
         rel = conn.sql(f"SELECT * FROM {source} LIMIT 0")
-        columns = list(zip(rel.columns, [str(t) for t in rel.types]))
+        columns = list(zip(rel.columns, [str(t) for t in rel.types], strict=True))
         version = ctx.catalog.add_version(
             dataset_id=dataset.id, version=1, stored=stored,
             columns_schema=[{"name": n, "physical_type": t} for n, t in columns],

@@ -40,7 +40,7 @@ class AppContext:
         if ds.view_sql:
             with self.warehouse.cur() as conn:
                 rel = conn.sql(ds.view_sql)
-                columns = dict(zip(rel.columns, [str(t) for t in rel.types]))
+                columns = dict(zip(rel.columns, [str(t) for t in rel.types], strict=True))
             return ResolvedSource(sql=f"({ds.view_sql})", columns=columns)
 
         raise QueryError(f"dataset {dataset_id} has no materialised version")

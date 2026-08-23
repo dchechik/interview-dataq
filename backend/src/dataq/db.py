@@ -8,8 +8,8 @@ independent, thread-safe execution context sharing the same catalog and buffer p
 from __future__ import annotations
 
 import threading
-from contextlib import contextmanager
 from collections.abc import Iterator
+from contextlib import contextmanager
 
 import duckdb
 

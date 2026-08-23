@@ -14,7 +14,7 @@ from .fixtures import write_auth_csv, write_taxi_csv
 def _profile(conn, path):
     rel = CsvReader().to_relation(conn, str(path), CsvParams())
     rel.create_view("src", replace=True)
-    cols = list(zip(rel.columns, [str(t) for t in rel.types]))
+    cols = list(zip(rel.columns, [str(t) for t in rel.types], strict=True))
     stats = compute_stats(conn, "src", cols, sample_rows=5000)
     return {p.name: p for p in profile_columns(stats)}
 
@@ -66,7 +66,8 @@ def test_pinned_types_survive_reprofiling(conn, tmp_path):
 
     rel = CsvReader().to_relation(conn, str(path), CsvParams())
     rel.create_view("src2", replace=True)
-    stats = compute_stats(conn, "src2", list(zip(rel.columns, [str(t) for t in rel.types])), 5000)
+    cols = list(zip(rel.columns, [str(t) for t in rel.types], strict=True))
+    stats = compute_stats(conn, "src2", cols, 5000)
     again = {p.name: p for p in profile_columns(stats, previous=first)}
     assert again["action"].semantic_type == "identity.key"
     assert again["action"].pinned is True

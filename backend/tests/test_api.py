@@ -1,0 +1,186 @@
+"""API surface: contracts the frontend and the agent both depend on."""
+
+from __future__ import annotations
+
+import pytest
+from fastapi.testclient import TestClient
+
+from dataq.api.app import create_app
+
+from .fixtures import write_auth_csv, write_taxi_csv
+
+
+@pytest.fixture
+def client(app_ctx):
+    import dataq.api.app as app_module
+
+    app = create_app(ctx=app_ctx)
+    with TestClient(app) as c:
+        yield c
+    app_module.CTX = None
+
+
+def _import(client, app_ctx, path, name):
+    r = client.post("/api/operations", json={"op": "import", "uri": str(path), "name": name})
+    assert r.status_code == 202, r.text
+    job_id = r.json()["job_id"]
+    app_ctx.runner.wait(job_id, timeout=120)
+    job = client.get(f"/api/jobs/{job_id}").json()
+    assert job["status"] == "succeeded", job
+    return job["steps"][0]["outputs"][0]["dataset_id"]
+
+
+def test_health_and_plugin_catalogue(client):
+    assert client.get("/api/health").json()["status"] == "ok"
+
+    plugins = client.get("/api/plugins").json()
+    assert len(plugins) >= 20
+    by_id = {p["id"]: p for p in plugins}
+    # Every descriptor must carry a JSON Schema: the UI form renderer and the
+    # agent tool generator both depend on it.
+    for p in plugins:
+        assert "params_schema" in p and p["params_schema"]["type"] == "object"
+    assert by_id["normalize.ip"]["mode"] == "pushdown"
+    assert by_id["transform.ip_class"]["mode"] == "batch"
+    assert by_id["extract.entities"]["mode"] == "external"
+    assert by_id["extract.entities"]["cost_class"] == "expensive"
+    assert by_id["viz.map_points"]["kind"] == "visualizer"
+
+
+def test_filter_plugins_by_kind_and_mode(client):
+    assert all(p["kind"] == "reader" for p in
+               client.get("/api/plugins?kind=reader").json())
+    assert all(p["mode"] == "inspect" for p in
+               client.get("/api/plugins?mode=inspect").json())
+
+
+def test_preview_before_import(client, tmp_path):
+    path = write_auth_csv(tmp_path / "auth.csv", rows=40)
+    r = client.post("/api/sources/preview", json={"uri": str(path), "limit": 5})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["reader"] == "read.csv"
+    assert "src_ip" in body["columns"]
+    assert len(body["rows"]) == 5
+
+
+def test_import_profile_and_applicable_plugins(client, app_ctx, tmp_path):
+    ds = _import(client, app_ctx, write_auth_csv(tmp_path / "a.csv", rows=200), "auth")
+
+    profile = client.get(f"/api/datasets/{ds}/profile").json()
+    types = {c["name"]: c["semantic_type"] for c in profile["columns"]}
+    assert types["src_ip"] == "net.ip"
+    assert types["country"] == "geo.country_iso2"
+
+    applicable = client.get(f"/api/plugins?applicable_to={ds}").json()
+    ids = {p["id"] for p in applicable}
+    # An IP column makes the IP plugins applicable...
+    assert {"normalize.ip", "transform.ip_class"} <= ids
+    # ...and the absence of coordinates keeps the map plugin out.
+    assert "viz.map_points" not in ids
+
+
+def test_applicable_plugins_include_map_for_geo_data(client, app_ctx, tmp_path):
+    ds = _import(client, app_ctx, write_taxi_csv(tmp_path / "t.csv", rows=200), "taxi")
+    ids = {p["id"] for p in client.get(f"/api/plugins?applicable_to={ds}").json()}
+    assert "viz.map_points" in ids
+    assert "normalize.ip" not in ids
+
+
+def test_suggestions_are_executable_actions(client, app_ctx, tmp_path):
+    ds = _import(client, app_ctx, write_taxi_csv(tmp_path / "t.csv", rows=300), "taxi")
+    suggestions = client.get(f"/api/datasets/{ds}/suggestions").json()
+    assert suggestions
+
+    # A suggestion must be actionable, not prose.
+    viz = [s for s in suggestions if s["kind"] == "viz"]
+    assert viz and all(s["action"].get("plugin_id") for s in viz)
+    assert any("map" in s["action"]["plugin_id"] for s in viz)
+
+    # Replaying a suggestion's action verbatim must work.
+    action = next(s["action"] for s in viz if s["action"]["plugin_id"] == "viz.map_points")
+    r = client.post("/api/inspect", json={
+        "plugin_id": action["plugin_id"], "dataset_id": action["dataset_id"],
+        "params": action["params"],
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["spec"]["renderer"] == "maplibre"
+    assert body["row_count"] > 0
+    assert {"lat", "lng"} <= set(body["data"][0])
+
+
+def test_aggregate_suggestion_round_trip(client, app_ctx, tmp_path):
+    ds = _import(client, app_ctx, write_auth_csv(tmp_path / "a.csv", rows=400), "auth")
+    suggestions = client.get(f"/api/datasets/{ds}/suggestions?kind=aggregate").json()
+    freq = next(s for s in suggestions if s["action"]["plugin_id"] == "agg.frequency"
+                and s["action"]["params"]["column"] == "country")
+
+    r = client.post("/api/operations", json=freq["action"])
+    assert r.status_code == 202
+    app_ctx.runner.wait(r.json()["job_id"], timeout=60)
+    job = client.get(f"/api/jobs/{r.json()['job_id']}").json()
+    assert job["status"] == "succeeded", job
+
+    agg_id = job["steps"][0]["outputs"][0]["dataset_id"]
+    rows = client.post("/api/query", json={"dataset": agg_id, "limit": 20}).json()
+    cols = set(rows["columns"])
+    assert {"country", "n", "share", "rarity"} <= cols
+    shares = [r[rows["columns"].index("share")] for r in rows["rows"]]
+    assert abs(sum(shares) - 1.0) < 1e-6
+
+
+def test_query_validation_errors_are_400(client, app_ctx, tmp_path):
+    ds = _import(client, app_ctx, write_auth_csv(tmp_path / "a.csv", rows=50), "auth")
+    r = client.post("/api/query", json={"dataset": ds, "group_by": ["nope"]})
+    assert r.status_code == 400
+    assert "unknown column" in r.json()["detail"]
+
+
+def test_sql_endpoint_rejects_writes(client, app_ctx, tmp_path):
+    _import(client, app_ctx, write_auth_csv(tmp_path / "a.csv", rows=50), "auth")
+    assert client.post("/api/query/sql", json={"sql": "SELECT 42 AS x"}).json()["rows"] == [[42]]
+    r = client.post("/api/query/sql", json={"sql": "CREATE TABLE evil AS SELECT 1"})
+    assert r.status_code == 400
+    assert "SELECT" in r.json()["detail"]
+
+
+def test_pin_column_type_survives_and_is_reported(client, app_ctx, tmp_path):
+    ds = _import(client, app_ctx, write_auth_csv(tmp_path / "a.csv", rows=100), "auth")
+    r = client.post(f"/api/datasets/{ds}/columns/action/type?semantic_type=identity.key&role=key")
+    assert r.status_code == 200
+    profile = client.get(f"/api/datasets/{ds}/profile").json()
+    col = next(c for c in profile["columns"] if c["name"] == "action")
+    assert col["semantic_type"] == "identity.key"
+    assert col["pinned"] is True
+
+
+def test_lineage_endpoint(client, app_ctx, tmp_path):
+    ds = _import(client, app_ctx, write_auth_csv(tmp_path / "a.csv", rows=100), "auth")
+    r = client.post("/api/operations", json={
+        "op": "transform", "plugin_id": "normalize.ip",
+        "inputs": [{"dataset_id": ds}], "params": {"column": "src_ip"}})
+    app_ctx.runner.wait(r.json()["job_id"], timeout=60)
+
+    steps = client.get(f"/api/datasets/{ds}/lineage").json()
+    assert [s["op"] for s in steps] == ["import", "transform"]
+    assert steps[1]["plugin_id"] == "normalize.ip"
+
+
+def test_dashboard_round_trip(client, app_ctx, tmp_path):
+    ds = _import(client, app_ctx, write_taxi_csv(tmp_path / "t.csv", rows=100), "taxi")
+    rendered = client.post("/api/inspect", json={
+        "plugin_id": "viz.histogram", "dataset_id": ds,
+        "params": {"column": "fare_amount"}}).json()
+
+    saved = client.post("/api/dashboards", json={
+        "name": "Fares", "panels": [rendered["spec"]]}).json()
+    got = client.get(f"/api/dashboards/{saved['id']}").json()
+    assert got["name"] == "Fares"
+    assert got["panels"][0]["renderer"] == "vega-lite"
+
+
+def test_unknown_dataset_is_404(client):
+    assert client.get("/api/datasets/nope").status_code == 404
+    assert client.get("/api/datasets/nope/profile").status_code == 404
+    assert client.get("/api/plugins?applicable_to=nope").status_code == 404

@@ -11,7 +11,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Protocol
 
 from ..catalog.repo import Catalog
@@ -33,7 +33,7 @@ class ThreadPoolJobRunner:
     def submit(self, job_id: str, fn: Callable[[], None]) -> None:
         def wrapped() -> None:
             self.catalog.update_job(
-                job_id, status="running", started_at=datetime.now(timezone.utc)
+                job_id, status="running", started_at=datetime.now(UTC)
             )
             try:
                 fn()
@@ -57,7 +57,7 @@ class ThreadPoolJobRunner:
 
     def _finish(self, job_id: str, status: str, error: str) -> None:
         self.catalog.update_job(
-            job_id, status=status, error=error, finished_at=datetime.now(timezone.utc)
+            job_id, status=status, error=error, finished_at=datetime.now(UTC)
         )
 
     def wait(self, job_id: str, timeout: float | None = None) -> None:

@@ -74,8 +74,14 @@ class StorageBackend(abc.ABC):
     name: str
 
     @abc.abstractmethod
-    def write_relation(self, ref: VersionRef, rel_sql: str, conn) -> StoredRef:
-        """One-shot materialisation of a SQL query (the ``pushdown`` path)."""
+    def write_relation(
+        self, ref: VersionRef, rel_sql: str, conn, params: list | None = None
+    ) -> StoredRef:
+        """One-shot materialisation of a SQL query (the ``pushdown`` path).
+
+        ``params`` are bound, not interpolated, so a compiled QuerySpec keeps its
+        literals parameterised all the way down to materialisation.
+        """
 
     @abc.abstractmethod
     def open_writer(self, ref: VersionRef, schema: pa.Schema, conn) -> PartWriter:

@@ -49,4 +49,4 @@ def run_sql(ctx: AppContext, sql: str, limit: int = 1000) -> QueryResult:
 
 
 def rows_as_dicts(result: QueryResult) -> list[dict]:
-    return [dict(zip(result.columns, r)) for r in result.rows]
+    return [dict(zip(result.columns, r, strict=True)) for r in result.rows]

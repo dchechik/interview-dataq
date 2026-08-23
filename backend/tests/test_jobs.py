@@ -130,12 +130,11 @@ def test_interrupted_batch_job_resumes_to_identical_output(app_ctx, source):
 
     ctx_b, step_b = _job_ctx(app_ctx)
     ref = VersionRef(dataset_id="resumed", version=1)
-    with app_ctx.warehouse.cur() as conn:
-        with pytest.raises(KeyboardInterrupt):
-            run_streaming_transform(
-                Interrupting(), ColumnParams(column="n"), conn, source_sql, profile,
-                app_ctx.storage, ref, ctx_b, app_ctx.settings,
-            )
+    with app_ctx.warehouse.cur() as conn, pytest.raises(KeyboardInterrupt):
+        run_streaming_transform(
+            Interrupting(), ColumnParams(column="n"), conn, source_sql, profile,
+            app_ctx.storage, ref, ctx_b, app_ctx.settings,
+        )
 
     step_b = app_ctx.catalog.get_step(step_b.id)
     assert step_b.rows_committed == 60, "watermark should reflect durable parts only"
@@ -193,13 +192,12 @@ def test_budget_cap_aborts_with_partial_results(app_ctx, source):
     CountingExternal.seen.clear()
 
     ctx, step = _job_ctx(app_ctx)
-    with app_ctx.warehouse.cur() as conn:
-        with pytest.raises(BudgetExceeded):
-            run_streaming_transform(
-                CountingExternal(), ColumnParams(column="n"), conn, source_sql, profile,
-                app_ctx.storage, VersionRef(dataset_id="capped", version=1),
-                ctx, app_ctx.settings, model=FakeModelClient(), max_cost_usd=0.03,
-            )
+    with app_ctx.warehouse.cur() as conn, pytest.raises(BudgetExceeded):
+        run_streaming_transform(
+            CountingExternal(), ColumnParams(column="n"), conn, source_sql, profile,
+            app_ctx.storage, VersionRef(dataset_id="capped", version=1),
+            ctx, app_ctx.settings, model=FakeModelClient(), max_cost_usd=0.03,
+        )
     # It stopped early rather than processing all 120 rows.
     assert len(CountingExternal.seen) < 120
     assert ctx.cost.usd >= 0.03

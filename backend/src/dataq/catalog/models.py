@@ -9,7 +9,7 @@ lock the bottleneck for the whole API.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import Column, Index
@@ -22,7 +22,7 @@ def new_id() -> str:
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _json(default: Any) -> Any:

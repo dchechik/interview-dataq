@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -222,7 +222,7 @@ class Catalog:
             row = s.get(JobRow, job_id)
             if row is None:
                 return
-            stamped = f"{datetime.now(timezone.utc).isoformat(timespec='seconds')} {message}"
+            stamped = f"{datetime.now(UTC).isoformat(timespec='seconds')} {message}"
             # Reassign: SQLAlchemy does not track in-place mutation of JSON columns.
             row.logs = [*row.logs, stamped][-500:]
             s.add(row)
@@ -280,7 +280,7 @@ class Catalog:
                 row = DashboardRow(name=name, panels=panels, description=description)
             else:
                 row.name, row.panels, row.description = name, panels, description
-                row.updated_at = datetime.now(timezone.utc)
+                row.updated_at = datetime.now(UTC)
             s.add(row)
             s.commit()
             s.refresh(row)
