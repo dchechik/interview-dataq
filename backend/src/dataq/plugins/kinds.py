@@ -161,16 +161,31 @@ class AggregateCtx:
     params: Any
 
 
+@dataclass
+class AggregatePlan:
+    """A ``QuerySpec`` plus optional derived expressions layered on top of it.
+
+    ``derive`` exists because some genuinely useful aggregates need window
+    functions -- a rarity share is ``n / sum(n) over ()`` -- which the user-facing
+    ``QuerySpec`` deliberately cannot express. These expressions are authored by
+    plugin code, which is trusted, never by a user or an agent, so widening the
+    plugin return type does not widen the injection surface.
+    """
+
+    spec: QuerySpec
+    derive: dict[str, str] = field(default_factory=dict)
+
+
 class Aggregator(Plugin, abc.ABC):
     """Produces a *new* aggregate Dataset (it changes cardinality, so it cannot be
-    a new version of the input). Expressed as a ``QuerySpec`` generator, which makes
+    a new version of the input). Expressed as a query-plan generator, which makes
     it pushdown by construction and composable with the query layer."""
 
     kind: ClassVar[str] = "aggregator"
     mode: ClassVar[str] = "pushdown"
 
     @abc.abstractmethod
-    def plan(self, ctx: AggregateCtx) -> QuerySpec: ...
+    def plan(self, ctx: AggregateCtx) -> AggregatePlan: ...
 
 
 # --------------------------------------------------------------------------- #
