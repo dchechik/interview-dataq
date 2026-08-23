@@ -386,10 +386,20 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - a flat route table
 
 
 def _mount_frontend(app: FastAPI) -> None:
-    """Serve the built SPA in production, so the whole app is one container."""
-    dist = Path(__file__).resolve().parents[3] / "static"
-    if dist.is_dir():
-        app.mount("/", StaticFiles(directory=dist, html=True), name="frontend")
+    """Serve the built SPA in production, so the whole app is one container.
+
+    Mounted last so it never shadows /api. ``html=True`` makes StaticFiles fall
+    back to index.html, which is what a client-side router needs on deep links.
+    """
+    configured = get_settings().static_dir
+    candidates = [configured] if configured else [
+        Path("/app/static"),
+        Path(__file__).resolve().parents[4] / "frontend" / "dist",
+    ]
+    for dist in candidates:
+        if dist and dist.is_dir():
+            app.mount("/", StaticFiles(directory=dist, html=True), name="frontend")
+            return
 
 
 app = create_app()

@@ -12,7 +12,7 @@ from typing import ClassVar
 
 from pydantic import BaseModel
 
-from ...core.profile import ColumnProfile
+from ...core.profile import ColumnProfile, DatasetProfile
 from ...core.semantic import SEMANTIC_TYPES
 from ..base import NoParams, Produces, register
 from ..kinds import SuggestCtx, Suggester, Suggestion
@@ -28,6 +28,23 @@ def _operation(op: str, plugin_id: str, dataset_id: str, params: dict) -> dict:
             "inputs": [{"dataset_id": dataset_id}], "params": params}
 
 
+def _interesting_measures(profile: DatasetProfile) -> list[ColumnProfile]:
+    """Measures worth charting, best first.
+
+    Money beats an arbitrary numeric column, and derived integer encodings (an IP
+    rendered as UBIGINT, say) are never interesting to average, so they go last.
+    """
+    def rank(c: ColumnProfile) -> tuple[int, str]:
+        if c.semantic_type == "money.amount":
+            return (0, c.name)
+        if c.name.endswith(("_int", "_id", "_count", "_version")):
+            return (2, c.name)
+        return (1, c.name)
+
+    measures = [c for c in profile.by_role("measure") if not c.name.endswith("_int")]
+    return sorted(measures, key=rank)
+
+
 @register
 class VizSuggester(Suggester):
     """Propose charts that suit the dataset's shape."""
@@ -41,7 +58,7 @@ class VizSuggester(Suggester):
         p = ctx.profile
         out: list[Suggestion] = []
         times = p.by_role("time")
-        measures = [c for c in p.by_role("measure") if not c.name.endswith("_int")]
+        measures = _interesting_measures(p)
         dims = [c for c in p.columns if c.role == "dimension"
                 and SEMANTIC_TYPES.matches_any(c.semantic_type, ("categorical",))]
         lats = p.by_semantic("geo.lat")
@@ -135,7 +152,7 @@ class AggregateSuggester(Suggester):
             ))
 
         times = p.by_role("time")
-        measures = [c for c in p.by_role("measure") if not c.name.endswith("_int")]
+        measures = _interesting_measures(p)
         if times:
             out.append(Suggestion(
                 title=f"Daily rollup by {times[0].name}",

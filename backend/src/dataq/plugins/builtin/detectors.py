@@ -226,6 +226,24 @@ class MoneyDetector(Detector):
 
 
 @register
+class BooleanDetector(Detector):
+    """Physical booleans.
+
+    Without this, a BOOLEAN column has no semantic type at all and so cannot be
+    matched by plugins that accept ``boolean``.
+    """
+
+    id: ClassVar[str] = "detect.boolean"
+    title: ClassVar[str] = "Boolean"
+
+    def detect(self, stats: ColumnStats) -> list[SemanticGuess]:
+        if not stats.physical_type.upper().startswith("BOOL"):
+            return []
+        return [SemanticGuess(semantic_type="boolean", confidence=0.99,
+                              rationale="column is physically a BOOLEAN")]
+
+
+@register
 class CardinalityDetector(Detector):
     """Low-cardinality enums and high-cardinality identifiers.
 

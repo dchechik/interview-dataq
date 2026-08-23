@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     model: str = "claude-opus-5"
 
+    # Built frontend bundle. Served at / when present, so production is a single
+    # container. Unset in dev, where Vite serves the SPA and proxies /api.
+    static_dir: Path | None = None
+
     @property
     def catalog_path(self) -> Path:
         return self.data_dir / "catalog.sqlite"
