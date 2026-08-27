@@ -5,6 +5,7 @@ import { Link, useParams } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
 import {
   keys,
+  useDataset,
   useLineage,
   useOperation,
   usePlugins,
@@ -274,6 +275,7 @@ function SuggestionCard({
 export function DatasetPage() {
   const { id = '' } = useParams()
   const qc = useQueryClient()
+  const { data: dataset } = useDataset(id)
   const { data: profile } = useProfile(id)
   const { data: versions } = useVersions(id)
   const { data: lineage } = useLineage(id)
@@ -302,7 +304,20 @@ export function DatasetPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold text-slate-900">{id}</h1>
+        <h1 className="text-xl font-semibold text-slate-900">
+          {dataset?.name ?? 'Dataset'}
+        </h1>
+        {dataset && dataset.kind !== 'source' && (
+          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">
+            {dataset.kind}
+          </span>
+        )}
+        <code
+          className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-500"
+          title="Dataset id"
+        >
+          {id}
+        </code>
         <span className="text-sm text-slate-500">
           {profile.row_count.toLocaleString()} rows · v{profile.version} ·{' '}
           {profile.columns.length} columns

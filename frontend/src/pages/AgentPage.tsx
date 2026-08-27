@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
-import { useDatasets } from '../api/hooks'
+import { useDataset } from '../api/hooks'
 import type { VizSpec } from '../api/types'
 import { VizRenderer } from '../renderers'
 
@@ -60,13 +60,15 @@ function ToolCall({ turn, result }: { turn: Turn; result?: Turn }) {
  */
 export function AgentPage() {
   const { id } = useParams()
-  const { data: datasets } = useDatasets()
+
   const [turns, setTurns] = useState<Turn[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  const dataset = datasets?.find((d) => d.id === id)
+  // Fetched directly rather than scanned out of the list, so a deep link
+  // resolves the name without waiting for every dataset.
+  const { data: dataset } = useDataset(id)
 
   async function send(message: string) {
     if (!message.trim() || busy) return

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import { api, ApiError } from '../api/client'
-import { useProfile } from '../api/hooks'
+import { useDataset, useProfile } from '../api/hooks'
 import type { Filter, QueryResult, QuerySpec, Select } from '../api/types'
 import { TableRenderer } from '../renderers/TableRenderer'
 
@@ -12,6 +12,7 @@ const AGGS = ['', 'count', 'count_distinct', 'sum', 'avg', 'min', 'max', 'median
 
 export function QueryPage() {
   const { id = '' } = useParams()
+  const { data: dataset } = useDataset(id)
   const { data: profile } = useProfile(id)
   const [filters, setFilters] = useState<Filter[]>([])
   const [groupBy, setGroupBy] = useState<string[]>([])
@@ -46,7 +47,7 @@ export function QueryPage() {
     <div className="space-y-4">
       <div className="flex items-center gap-3">
         <Link to={`/datasets/${id}`} className="text-sm text-slate-500 hover:text-slate-800">
-          ← {id}
+          ← {dataset?.name ?? id}
         </Link>
         <h1 className="text-xl font-semibold text-slate-900">Query</h1>
         <div className="ml-auto flex rounded border border-slate-300">

@@ -20,6 +20,14 @@ export const keys = {
 
 export const useDatasets = () => useQuery({ queryKey: keys.datasets, queryFn: api.datasets })
 
+/** One dataset's summary — name, kind, row count. The profile does not carry these. */
+export const useDataset = (id: string | undefined) =>
+  useQuery({
+    queryKey: keys.dataset(id ?? ''),
+    queryFn: () => api.dataset(id!),
+    enabled: Boolean(id),
+  })
+
 export const useProfile = (id: string | undefined, version?: number) =>
   useQuery({
     queryKey: keys.profile(id ?? '', version),

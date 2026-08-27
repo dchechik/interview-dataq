@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import { api } from '../api/client'
-import { keys, useSuggestions } from '../api/hooks'
+import { keys, useDataset, useSuggestions } from '../api/hooks'
 import type { RenderedViz, Suggestion } from '../api/types'
 import { VizRenderer } from '../renderers'
 
@@ -15,6 +15,7 @@ import { VizRenderer } from '../renderers'
 export function ExplorePage() {
   const { id = '' } = useParams()
   const qc = useQueryClient()
+  const { data: dataset } = useDataset(id)
   const { data: suggestions } = useSuggestions(id, 'viz')
   const [saved, setSaved] = useState<string | null>(null)
 
@@ -55,7 +56,7 @@ export function ExplorePage() {
     <div className="space-y-4">
       <div className="flex items-center gap-3">
         <Link to={`/datasets/${id}`} className="text-sm text-slate-500 hover:text-slate-800">
-          ← {id}
+          ← {dataset?.name ?? id}
         </Link>
         <h1 className="text-xl font-semibold text-slate-900">Explore</h1>
         {saved && (
