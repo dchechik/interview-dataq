@@ -1,5 +1,5 @@
-import { useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import { api, ApiError } from '../api/client'
@@ -280,11 +280,14 @@ export function DatasetPage() {
   const { data: suggestions } = useSuggestions(id)
   const { data: applicable } = usePlugins({ applicable_to: id })
   const [jobId, setJobId] = useState<string | null>(null)
-  const [semanticTypes, setSemanticTypes] = useState<string[]>([])
 
-  useMemo(() => {
-    api.semanticTypes().then((t) => setSemanticTypes(t.map((x) => x.id)))
-  }, [])
+  // The semantic type vocabulary is static per deployment, so it caches well.
+  const { data: semanticTypeRows } = useQuery({
+    queryKey: ['semantic-types'],
+    queryFn: api.semanticTypes,
+    staleTime: Infinity,
+  })
+  const semanticTypes = semanticTypeRows?.map((t) => t.id) ?? []
 
   const columns = profile?.columns.map((c) => c.name) ?? []
 

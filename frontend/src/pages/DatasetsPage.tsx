@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 
 import { api, ApiError } from '../api/client'
 import { useDatasets, useOperation } from '../api/hooks'
+import { FileBrowser } from '../components/FileBrowser'
 import { JobProgress } from '../components/JobProgress'
 
 interface Preview {
@@ -20,15 +21,26 @@ export function DatasetsPage() {
   const [preview, setPreview] = useState<Preview | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [jobId, setJobId] = useState<string | null>(null)
+  const [browsing, setBrowsing] = useState(false)
 
-  async function doPreview() {
+  async function doPreview(target = uri) {
     setError(null)
     setPreview(null)
     try {
-      setPreview(await api.preview(uri, 8))
+      setPreview(await api.preview(target, 8))
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e))
     }
+  }
+
+  /** Picking a file fills the path, names the dataset after it, and previews. */
+  function handlePicked(picked: string) {
+    setUri(picked)
+    if (!name) {
+      const base = picked.split('/').pop() ?? ''
+      setName(base.replace(/\.(gz)$/, '').replace(/\.[^.]+$/, ''))
+    }
+    doPreview(picked)
   }
 
   async function doImport() {
@@ -46,12 +58,21 @@ export function DatasetsPage() {
       <section className="rounded-lg border border-slate-200 bg-white p-4">
         <h2 className="mb-3 text-base font-semibold text-slate-900">Import a dataset</h2>
         <div className="flex flex-wrap gap-2">
-          <input
-            className="min-w-96 flex-1 rounded border border-slate-300 px-3 py-1.5 text-sm"
-            placeholder="/path/to/data.parquet, /path/to/data.csv, or a glob"
-            value={uri}
-            onChange={(e) => setUri(e.target.value)}
-          />
+          <div className="flex min-w-96 flex-1 rounded border border-slate-300 focus-within:ring-1 focus-within:ring-slate-400">
+            <input
+              className="flex-1 rounded-l px-3 py-1.5 text-sm outline-none"
+              placeholder="Choose a file, or type a path or glob"
+              value={uri}
+              onChange={(e) => setUri(e.target.value)}
+            />
+            <button
+              type="button"
+              onClick={() => setBrowsing(true)}
+              className="rounded-r border-l border-slate-300 bg-slate-50 px-3 text-sm text-slate-700 hover:bg-slate-100"
+            >
+              Browse…
+            </button>
+          </div>
           <input
             className="w-48 rounded border border-slate-300 px-3 py-1.5 text-sm"
             placeholder="name (optional)"
@@ -60,7 +81,7 @@ export function DatasetsPage() {
           />
           <button
             type="button"
-            onClick={doPreview}
+            onClick={() => doPreview()}
             disabled={!uri}
             className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-40"
           >
@@ -119,6 +140,12 @@ export function DatasetsPage() {
         <div className="mt-3">
           <JobProgress jobId={jobId} />
         </div>
+
+        <FileBrowser
+          open={browsing}
+          onClose={() => setBrowsing(false)}
+          onSelect={handlePicked}
+        />
       </section>
 
       <section>

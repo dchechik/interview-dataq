@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -30,6 +30,7 @@ from ..plugins.base import REGISTRY, PluginDescriptor
 from ..plugins.builtin.readers import pick_reader
 from ..query.compiler import QueryError
 from ..query.spec import QueryResult, QuerySpec
+from ..services import browse as browse_service
 from ..services import inspect as inspect_service
 from ..services.context import AppContext, build_context
 from ..services.operations import OperationAccepted, OperationRequest, submit_operation
@@ -187,6 +188,50 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - a flat route table
             raise HTTPException(400, f"{type(exc).__name__}: {exc}") from exc
         return {"reader": reader_cls.id, "columns": columns, "types": types,
                 "rows": [list(r) for r in rows]}
+
+    @app.get("/api/sources/browse")
+    def browse(path: str | None = None, show_hidden: bool = False) -> dict:
+        """List a server-side directory so the UI can offer a file picker.
+
+        DuckDB reads data files in place, so the picker has to return a path the
+        *server* can open. Confined to the configured browse roots.
+        """
+        try:
+            return browse_service.list_directory(path, context().settings, show_hidden)
+        except browse_service.BrowseError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.post("/api/sources/upload")
+    async def upload(file: UploadFile = File(...)) -> dict:
+        """Accept a file from the browser when it is not on the same machine.
+
+        Streamed to disk in chunks so a large upload does not have to fit in
+        memory. Prefer browsing for multi-GB files, which avoids the copy entirely.
+        """
+        settings = context().settings
+        target = browse_service.safe_upload_path(file.filename or "upload", settings)
+        limit = settings.max_upload_mb * 1024 * 1024
+        written = 0
+        try:
+            with target.open("wb") as out:
+                while chunk := await file.read(1024 * 1024):
+                    written += len(chunk)
+                    if written > limit:
+                        raise HTTPException(
+                            413,
+                            f"file exceeds the {settings.max_upload_mb} MB upload limit; "
+                            "put it somewhere the server can read and use Browse instead",
+                        )
+                    out.write(chunk)
+        except HTTPException:
+            target.unlink(missing_ok=True)
+            raise
+        except OSError as exc:
+            target.unlink(missing_ok=True)
+            raise HTTPException(500, f"could not save upload: {exc}") from exc
+        return {"uri": str(target), "name": target.name, "bytes": written}
 
     @app.get("/api/datasets", response_model=list[DatasetSummary])
     def list_datasets() -> list[DatasetSummary]:

@@ -1,4 +1,5 @@
 import type {
+  BrowseResult,
   Dashboard,
   DatasetProfile,
   DatasetSummary,
@@ -11,6 +12,7 @@ import type {
   QuerySpec,
   RenderedViz,
   Suggestion,
+  UploadResult,
 } from './types'
 
 /** Same-origin in production; Vite proxies /api to uvicorn in dev. */
@@ -29,9 +31,15 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  // FormData must set its own Content-Type so the multipart boundary is included;
+  // forcing application/json here would make the upload unparseable.
+  const isForm = init?.body instanceof FormData
   const res = await fetch(`${BASE}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    headers: {
+      ...(isForm ? {} : { 'Content-Type': 'application/json' }),
+      ...(init?.headers ?? {}),
+    },
   })
   if (!res.ok) {
     // FastAPI puts the useful message in `detail`; surface it rather than a bare code.
@@ -89,6 +97,19 @@ export const api = {
   },
 
   // --- sources ---
+  browse: (path?: string, showHidden = false) => {
+    const q = new URLSearchParams()
+    if (path) q.set('path', path)
+    if (showHidden) q.set('show_hidden', 'true')
+    const qs = q.toString()
+    return request<BrowseResult>(`/sources/browse${qs ? `?${qs}` : ''}`)
+  },
+  upload: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    // No Content-Type header: the browser must set the multipart boundary.
+    return request<UploadResult>('/sources/upload', { method: 'POST', body: form })
+  },
   preview: (uri: string, limit = 20) =>
     post<{ reader: string; columns: string[]; types: string[]; rows: unknown[][] }>(
       '/sources/preview',

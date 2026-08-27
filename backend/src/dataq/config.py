@@ -33,6 +33,15 @@ class Settings(BaseSettings):
     profile_sample_rows: int = 10_000
     dry_run_rows: int = 1_000
 
+    # Directories the file browser may list, colon-separated. Browsing is
+    # confined to these, so a hosted deployment cannot be walked from the UI.
+    # Unset means the user's home directory plus the working directory, which is
+    # what you want when the "server" is your own laptop.
+    browse_roots: str | None = None
+    # Cap on files uploaded through the browser. Server-side files are read in
+    # place by DuckDB and are not subject to this.
+    max_upload_mb: int = 2_048
+
     # Agent / LLM plugins.
     anthropic_api_key: str | None = None
     model: str = "claude-opus-5"
@@ -55,9 +64,35 @@ class Settings(BaseSettings):
     def lake_dir(self) -> Path:
         return self.data_dir / "lake"
 
+    @property
+    def upload_dir(self) -> Path:
+        return self.data_dir / "uploads"
+
+    def resolved_browse_roots(self) -> list[Path]:
+        """Directories the browser may list. Always includes the upload dir, so
+        files sent from the browser are visible to it afterwards."""
+        if self.browse_roots:
+            roots = [Path(p).expanduser() for p in self.browse_roots.split(":") if p.strip()]
+        else:
+            roots = [Path.home(), Path.cwd()]
+        # Created eagerly: a root that does not exist is dropped below, and an
+        # upload would then land somewhere the browser cannot show.
+        self.upload_dir.mkdir(parents=True, exist_ok=True)
+        roots.append(self.upload_dir)
+        seen: list[Path] = []
+        for r in roots:
+            try:
+                resolved = r.resolve()
+            except OSError:
+                continue
+            if resolved.is_dir() and resolved not in seen:
+                seen.append(resolved)
+        return seen
+
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.lake_dir.mkdir(parents=True, exist_ok=True)
+        self.upload_dir.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

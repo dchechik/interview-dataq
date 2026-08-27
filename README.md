@@ -11,8 +11,8 @@ make demo           # generate sample taxi + auth-log datasets
 make dev            # api on :8000, web on :5173
 ```
 
-Then open http://127.0.0.1:5173, paste `sample-data/taxi.csv` into the import box,
-and follow the suggestions.
+Then open http://127.0.0.1:5173, click **Browse…** in the import box, pick
+`sample-data/taxi.csv`, and follow the suggestions.
 
 ---
 
@@ -74,6 +74,16 @@ meaning, not merely a column name.
 
 Detected types can be corrected in the UI. A human edit **pins** the column, freezing
 it against future re-detection.
+
+### Importing without typing a path
+
+DuckDB reads data files **in place**, so the import box needs a path the *server*
+can open — which a browser's file input cannot supply (it hands over contents, not a
+location). **Browse…** therefore lists the server's filesystem, confined to
+`DATAQ_BROWSE_ROOTS`; unset, that means your home and working directories, which is
+right when the server is your own laptop. For a file that really is only on the
+viewer's machine, the same dialog offers an upload, capped by `DATAQ_MAX_UPLOAD_MB`.
+Browsing is the better path for multi-GB files: it avoids the copy entirely.
 
 ### Suggestions are executable
 
@@ -150,7 +160,7 @@ backend/src/dataq/
 frontend/src/
   api/         typed client + React Query hooks
   renderers/   registry keyed on VizSpec.renderer
-  components/  SchemaForm (JSON Schema -> form), JobProgress (SSE)
+  components/  SchemaForm (JSON Schema -> form), FileBrowser, JobProgress (SSE)
   pages/       Datasets, Dataset, Query, Explore, Dashboards
 ```
 

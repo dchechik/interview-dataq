@@ -90,6 +90,29 @@ export interface DatasetProfile {
   columns: ColumnProfile[]
 }
 
+export interface BrowseEntry {
+  name: string
+  path: string
+  is_dir: boolean
+  size: number | null
+  importable: boolean
+  reader_id: string | null
+}
+
+export interface BrowseResult {
+  path: string
+  parent: string | null
+  roots: { path: string; name: string }[]
+  entries: BrowseEntry[]
+  truncated: boolean
+}
+
+export interface UploadResult {
+  uri: string
+  name: string
+  bytes: number
+}
+
 export interface Suggestion {
   title: string
   rationale: string
