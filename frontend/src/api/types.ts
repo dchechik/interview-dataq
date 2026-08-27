@@ -53,6 +53,30 @@ export interface DatasetSummary {
   created_at: string
 }
 
+export interface DatasetNode extends DatasetSummary {
+  /** How this dataset was produced; null for an imported source. */
+  derived_via: { op: string; plugin_id: string } | null
+  /** For a join, the parents it does *not* nest under. */
+  joined_with: { id: string; name: string }[]
+  descendants: number
+  children: DatasetNode[]
+}
+
+export interface RelatedDataset {
+  id: string
+  name: string
+  kind: string
+  op: string
+  plugin_id: string
+  role: string
+  row_count?: number
+}
+
+export interface Related {
+  parents: RelatedDataset[]
+  children: RelatedDataset[]
+}
+
 export interface ColumnStats {
   name: string
   physical_type: string

@@ -7,6 +7,8 @@ import { TERMINAL_STATUSES } from './types'
 
 export const keys = {
   datasets: ['datasets'] as const,
+  datasetTree: ['datasets', 'tree'] as const,
+  related: (id: string) => ['related', id] as const,
   dataset: (id: string) => ['dataset', id] as const,
   profile: (id: string, v?: number) => ['profile', id, v ?? 'latest'] as const,
   versions: (id: string) => ['versions', id] as const,
@@ -19,6 +21,16 @@ export const keys = {
 }
 
 export const useDatasets = () => useQuery({ queryKey: keys.datasets, queryFn: api.datasets })
+
+export const useDatasetTree = () =>
+  useQuery({ queryKey: keys.datasetTree, queryFn: api.datasetTree })
+
+export const useRelated = (id: string | undefined) =>
+  useQuery({
+    queryKey: keys.related(id ?? ''),
+    queryFn: () => api.related(id!),
+    enabled: Boolean(id),
+  })
 
 /** One dataset's summary — name, kind, row count. The profile does not carry these. */
 export const useDataset = (id: string | undefined) =>
@@ -99,7 +111,12 @@ export function useJobWatcher(jobId: string | null) {
     let poll: ReturnType<typeof setInterval> | undefined
 
     const finish = () => {
+      // `keys.datasets` is a prefix of `keys.datasetTree`, so the tree refreshes
+      // with the list. Derivation edges live under their own key and need naming
+      // explicitly — otherwise a new aggregate does not appear under its parent
+      // until a reload.
       qc.invalidateQueries({ queryKey: keys.datasets })
+      qc.invalidateQueries({ queryKey: ['related'] })
       qc.invalidateQueries({ queryKey: keys.jobs })
     }
 

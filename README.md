@@ -85,6 +85,19 @@ right when the server is your own laptop. For a file that really is only on the
 viewer's machine, the same dialog offers an upload, capped by `DATAQ_MAX_UPLOAD_MB`.
 Browsing is the better path for multi-GB files: it avoids the copy entirely.
 
+### Derivation tree
+
+Aggregates and joins nest under the dataset they came from, on the datasets page
+and again as "Related datasets" on a dataset's own page. Two rules make the DAG in
+`Step.inputs`/`outputs` render as a tree:
+
+- A **transform is not an edge.** It produces a new *version* of the dataset it was
+  given, so it belongs to that dataset's history, not to its offspring.
+- A **join has two parents but a node has one.** It nests under its left input and
+  names the other parent inline, so the second edge stays visible.
+
+A dataset whose parent was deleted surfaces as a root rather than disappearing.
+
 ### Suggestions are executable
 
 A `Suggestion` carries an `action` that is a literal API request body. The UI renders
@@ -134,6 +147,8 @@ GET  /api/plugins?kind=&mode=&applicable_to=   what can I do with this dataset?
 POST /api/operations                           import | transform | aggregate | join -> 202 job
 POST /api/inspect                              synchronous twin for viz/suggesters
 GET  /api/jobs/{id}  /{id}/stream  /{id}/cancel
+GET  /api/datasets/tree              datasets nested by derivation
+GET  /api/datasets/{id}/related      immediate parents and derived children
 GET  /api/datasets/{id}/profile | versions | lineage | suggestions
 POST /api/query      POST /api/query/sql
 GET/POST /api/dashboards
@@ -155,12 +170,12 @@ backend/src/dataq/
   catalog/     SQLite models + repository
   query/       QuerySpec IR + compiler
   jobs/        runner, context, mode dispatcher, external facilities
-  services/    profiler, operations, query, inspect, model client
+  services/    profiler, operations, query, inspect, lineage, browse, agent, model
   api/         FastAPI routes (thin: resolve a plugin, call a service)
 frontend/src/
   api/         typed client + React Query hooks
   renderers/   registry keyed on VizSpec.renderer
-  components/  SchemaForm (JSON Schema -> form), FileBrowser, JobProgress (SSE)
+  components/  SchemaForm (JSON Schema -> form), DatasetTree, FileBrowser, JobProgress
   pages/       Datasets, Dataset, Query, Explore, Dashboards
 ```
 

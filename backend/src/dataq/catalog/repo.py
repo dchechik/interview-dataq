@@ -269,6 +269,24 @@ class Catalog:
             steps = list(s.exec(select(StepRow).order_by(StepRow.created_at)))
         return [st for st in steps if any(o.get("dataset_id") == dataset_id for o in st.outputs)]
 
+    def derivation_steps(self) -> list[StepRow]:
+        """Steps that created a *new dataset* from existing ones, oldest first.
+
+        Only ``aggregate`` and ``join`` qualify. A ``transform`` produces a new
+        version of the dataset it was given, not a child, and an ``import`` has no
+        parent at all -- so neither forms an edge in the derivation tree.
+        """
+        with self.session() as s:
+            steps = list(
+                s.exec(
+                    select(StepRow)
+                    .where(StepRow.op.in_(("aggregate", "join")))  # type: ignore[attr-defined]
+                    .where(StepRow.status == "succeeded")
+                    .order_by(StepRow.created_at)
+                )
+            )
+        return [st for st in steps if st.outputs and st.inputs]
+
     # --- dashboards --------------------------------------------------------
     def save_dashboard(
         self, name: str, panels: list[dict], description: str = "",

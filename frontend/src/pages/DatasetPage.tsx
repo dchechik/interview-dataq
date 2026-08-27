@@ -10,10 +10,16 @@ import {
   useOperation,
   usePlugins,
   useProfile,
+  useRelated,
   useSuggestions,
   useVersions,
 } from '../api/hooks'
-import type { ColumnProfile, PluginDescriptor, Suggestion } from '../api/types'
+import type {
+  ColumnProfile,
+  PluginDescriptor,
+  RelatedDataset,
+  Suggestion,
+} from '../api/types'
 import { JobProgress, StatusBadge } from '../components/JobProgress'
 import { SchemaForm } from '../components/SchemaForm'
 
@@ -272,6 +278,46 @@ function SuggestionCard({
   )
 }
 
+function RelatedRow({
+  item,
+  direction,
+}: {
+  item: RelatedDataset
+  direction: 'parent' | 'child'
+}) {
+  return (
+    <Link
+      to={`/datasets/${item.id}`}
+      className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+    >
+      <span className="text-slate-400">{direction === 'parent' ? '↑' : '↳'}</span>
+      <span className="font-medium text-slate-800">{item.name}</span>
+      <span
+        className={`rounded px-1.5 py-0.5 text-xs ${
+          RELATED_KIND_STYLES[item.kind] ?? 'bg-slate-100 text-slate-600'
+        }`}
+      >
+        {item.kind}
+      </span>
+      <span className="truncate text-xs text-slate-500">
+        {item.role === 'joined' ? 'joined in' : item.plugin_id || item.op}
+      </span>
+      {item.row_count != null && (
+        <span className="ml-auto font-mono text-xs tabular-nums text-slate-400">
+          {item.row_count.toLocaleString()} rows
+        </span>
+      )}
+    </Link>
+  )
+}
+
+const RELATED_KIND_STYLES: Record<string, string> = {
+  source: 'bg-slate-100 text-slate-600',
+  derived: 'bg-sky-100 text-sky-700',
+  aggregate: 'bg-violet-100 text-violet-700',
+  join: 'bg-emerald-100 text-emerald-700',
+}
+
 export function DatasetPage() {
   const { id = '' } = useParams()
   const qc = useQueryClient()
@@ -279,6 +325,7 @@ export function DatasetPage() {
   const { data: profile } = useProfile(id)
   const { data: versions } = useVersions(id)
   const { data: lineage } = useLineage(id)
+  const { data: related } = useRelated(id)
   const { data: suggestions } = useSuggestions(id)
   const { data: applicable } = usePlugins({ applicable_to: id })
   const [jobId, setJobId] = useState<string | null>(null)
@@ -426,6 +473,39 @@ export function DatasetPage() {
               </tbody>
             </table>
           </div>
+        </section>
+
+        <section>
+          <h2 className="mb-2 text-base font-semibold text-slate-900">Related datasets</h2>
+          {!related?.parents.length && !related?.children.length && (
+            <p className="rounded border border-dashed border-slate-300 p-4 text-center text-sm text-slate-500">
+              Nothing derived from this yet — try a suggested aggregate.
+            </p>
+          )}
+
+          {related && related.parents.length > 0 && (
+            <div className="mb-3">
+              <p className="mb-1 text-xs uppercase tracking-wide text-slate-500">Derived from</p>
+              <div className="space-y-1.5">
+                {related.parents.map((p) => (
+                  <RelatedRow key={`${p.id}-${p.role}`} item={p} direction="parent" />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {related && related.children.length > 0 && (
+            <div>
+              <p className="mb-1 text-xs uppercase tracking-wide text-slate-500">
+                Derived from this ({related.children.length})
+              </p>
+              <div className="space-y-1.5">
+                {related.children.map((c) => (
+                  <RelatedRow key={`${c.id}-${c.role}`} item={c} direction="child" />
+                ))}
+              </div>
+            </div>
+          )}
         </section>
 
         <section>

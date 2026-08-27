@@ -32,6 +32,7 @@ from ..query.compiler import QueryError
 from ..query.spec import QueryResult, QuerySpec
 from ..services import browse as browse_service
 from ..services import inspect as inspect_service
+from ..services import lineage as lineage_service
 from ..services.context import AppContext, build_context
 from ..services.operations import OperationAccepted, OperationRequest, submit_operation
 from ..services.query import run_query, run_sql
@@ -238,6 +239,32 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - a flat route table
         ctx = context()
         return [_summary(ctx, d) for d in ctx.catalog.list_datasets()]
 
+    @app.get("/api/datasets/tree")
+    def dataset_tree() -> list[dict]:
+        """Datasets nested under the dataset they were derived from.
+
+        Declared before /api/datasets/{dataset_id} so "tree" is not swallowed as
+        a dataset id.
+        """
+        ctx = context()
+
+        def to_dict(node) -> dict:
+            out = _summary(ctx, node.dataset).model_dump()
+            out["derived_via"] = (
+                {"op": node.edge.op, "plugin_id": node.edge.plugin_id}
+                if node.edge else None
+            )
+            out["joined_with"] = [
+                {"id": e.parent_id,
+                 "name": getattr(ctx.catalog.get_dataset(e.parent_id), "name", e.parent_id)}
+                for e in node.others
+            ]
+            out["descendants"] = node.descendants()
+            out["children"] = [to_dict(c) for c in node.children]
+            return out
+
+        return [to_dict(n) for n in lineage_service.build_forest(ctx.catalog)]
+
     @app.get("/api/datasets/{dataset_id}", response_model=DatasetSummary)
     def get_dataset(dataset_id: str) -> DatasetSummary:
         ctx = context()
@@ -293,6 +320,14 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - a flat route table
              "created_at": s.created_at.isoformat()}
             for s in context().catalog.lineage(dataset_id)
         ]
+
+    @app.get("/api/datasets/{dataset_id}/related")
+    def related(dataset_id: str) -> dict:
+        """Immediate parents and derived children of a dataset."""
+        try:
+            return lineage_service.related(context().catalog, dataset_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
 
     @app.get("/api/datasets/{dataset_id}/suggestions")
     def suggestions(dataset_id: str, kind: str | None = None) -> list[dict]:

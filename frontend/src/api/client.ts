@@ -1,6 +1,7 @@
 import type {
   BrowseResult,
   Dashboard,
+  DatasetNode,
   DatasetProfile,
   DatasetSummary,
   Job,
@@ -10,6 +11,7 @@ import type {
   PluginDescriptor,
   QueryResult,
   QuerySpec,
+  Related,
   RenderedViz,
   Suggestion,
   UploadResult,
@@ -78,6 +80,8 @@ export const api = {
 
   // --- datasets ---
   datasets: () => request<DatasetSummary[]>('/datasets'),
+  datasetTree: () => request<DatasetNode[]>('/datasets/tree'),
+  related: (id: string) => request<Related>(`/datasets/${id}/related`),
   dataset: (id: string) => request<DatasetSummary>(`/datasets/${id}`),
   deleteDataset: (id: string) => request<{ deleted: string }>(`/datasets/${id}`, { method: 'DELETE' }),
   profile: (id: string, version?: number) =>
