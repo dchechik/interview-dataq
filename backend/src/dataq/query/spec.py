@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field
 
 FilterOp = Literal[
     "=", "!=", "<", "<=", ">", ">=",
-    "in", "not_in", "contains", "starts_with", "between", "is_null", "is_not_null",
+    "in", "not_in", "contains", "starts_with", "between", "not_between",
+    "is_null", "is_not_null",
 ]
 
 AggFunc = Literal[

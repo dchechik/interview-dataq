@@ -192,6 +192,22 @@ export interface RenderedViz {
   spec: VizSpec
   data: Record<string, unknown>[]
   row_count: number
+  /** The SQL actually executed, for the chart's debug view. */
+  sql: string
+  elapsed_ms: number
+  truncated: boolean
+}
+
+export interface AgentEstimate {
+  input_tokens: number
+  /** True when counted by the API rather than approximated locally. */
+  exact: boolean
+  model: string
+  tools: number
+  max_turns: number
+  first_request_usd: number
+  worst_case_usd: number
+  has_api_key: boolean
 }
 
 export interface JobProgress {

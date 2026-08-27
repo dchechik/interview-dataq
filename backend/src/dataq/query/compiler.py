@@ -225,9 +225,10 @@ class QueryCompiler:
             return f"CAST({c} AS VARCHAR) ILIKE '%' || ? || '%'", [f.value]
         if op == "starts_with":
             return f"CAST({c} AS VARCHAR) ILIKE ? || '%'", [f.value]
-        if op == "between":
+        if op in ("between", "not_between"):
             lo, hi = (f.value or [None, None])[:2]
-            return f"{c} BETWEEN ? AND ?", [lo, hi]
+            negate = "NOT " if op == "not_between" else ""
+            return f"{c} {negate}BETWEEN ? AND ?", [lo, hi]
         if op == "is_null":
             return f"{c} IS NULL", []
         if op == "is_not_null":

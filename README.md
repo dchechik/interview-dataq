@@ -98,6 +98,13 @@ and again as "Related datasets" on a dataset's own page. Two rules make the DAG 
 
 A dataset whose parent was deleted surfaces as a root rather than disappearing.
 
+### Charts show their query
+
+Every chart carries the SQL that produced it, collapsed under the chart. A chart
+chosen by a suggester or an agent rather than by the person reading it is hard to
+trust otherwise. The Query page's default **Rows** view is a plain paginated
+`SELECT *`, which is what you want first when meeting an unfamiliar dataset.
+
 ### Suggestions are executable
 
 A `Suggestion` carries an `action` that is a literal API request body. The UI renders
@@ -210,6 +217,10 @@ Two permission scopes exist. `full` (the chat agent, driven by a human who can s
 and cancel jobs) can create aggregates, joins and transforms. `read_only` — handed to
 any agent-*backed plugin* — can query, profile and suggest but has no job-creating
 tools at all, which is the recursion guard: a plugin cannot spawn unbounded work.
+
+Before any request is sent the UI prices the run — tokens in the first request
+(counted by the API when a key is present, approximated otherwise) and a ceiling
+for the whole loop — and asks. The user is paying, so the decision is theirs.
 
 Set `ANTHROPIC_API_KEY` to enable it. Everything else runs without one.
 

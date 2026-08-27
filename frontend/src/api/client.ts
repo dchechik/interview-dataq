@@ -1,4 +1,5 @@
 import type {
+  AgentEstimate,
   BrowseResult,
   Dashboard,
   DatasetNode,
@@ -129,6 +130,10 @@ export const api = {
     params?: Record<string, unknown>
     limit?: number | null
   }) => post<RenderedViz>('/inspect', req),
+
+  // --- agent ---
+  agentEstimate: (message: string, history: unknown[] = []) =>
+    post<AgentEstimate>('/agent/estimate', { message, history }),
 
   // --- query ---
   query: (spec: QuerySpec) => post<QueryResult>('/query', spec),

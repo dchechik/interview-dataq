@@ -41,7 +41,10 @@ def render_viz(
         spec.query.limit = limit
 
     result = run_query(ctx, spec.query)
-    return RenderedViz(spec=spec, data=rows_as_dicts(result), row_count=result.row_count)
+    return RenderedViz(
+        spec=spec, data=rows_as_dicts(result), row_count=result.row_count,
+        sql=result.sql, elapsed_ms=result.elapsed_ms, truncated=result.truncated,
+    )
 
 
 def suggest(

@@ -5,6 +5,7 @@ import { Link, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { keys, useDataset, useSuggestions } from '../api/hooks'
 import type { RenderedViz, Suggestion } from '../api/types'
+import { QueryDebug } from '../components/QueryDebug'
 import { VizRenderer } from '../renderers'
 
 /**
@@ -105,11 +106,20 @@ export function ExplorePage() {
                 </p>
               )}
               {q.data && (
-                <VizRenderer
-                  spec={q.data.spec}
-                  data={q.data.data}
-                  height={q.data.spec.renderer === 'maplibre' ? 420 : 280}
-                />
+                <>
+                  <VizRenderer
+                    spec={q.data.spec}
+                    data={q.data.data}
+                    height={q.data.spec.renderer === 'maplibre' ? 420 : 280}
+                  />
+                  <QueryDebug
+                    sql={q.data.sql}
+                    spec={q.data.spec.query}
+                    rowCount={q.data.row_count}
+                    elapsedMs={q.data.elapsed_ms}
+                    truncated={q.data.truncated}
+                  />
+                </>
               )}
             </section>
           )

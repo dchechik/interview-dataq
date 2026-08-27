@@ -11,7 +11,7 @@ from typing import ClassVar
 from pydantic import BaseModel, Field
 
 from ...core.viz import Animate, VizSpec
-from ...query.spec import Interval, QuerySpec, Select, Sort, TimeBucket
+from ...query.spec import Filter, Interval, QuerySpec, Select, Sort, TimeBucket
 from ..base import Accepts, Produces, register
 from ..kinds import Visualizer, VizCtx
 
@@ -146,25 +146,70 @@ class MapParams(BaseModel):
         default=None, description="Temporal column to animate the map over"
     )
     interval: Interval = "day"
+    drop_invalid_coords: bool = Field(
+        default=True,
+        description=(
+            "Skip rows with missing coordinates, out-of-range values, or the "
+            "(0, 0) 'null island' that GPS dropouts record"
+        ),
+    )
+
+
+# GPS dropouts are commonly written as exactly 0 -- real NYC taxi data does this.
+# A single such row sits ~4,000 miles from the rest and stretches the map's
+# viewport across an ocean, shrinking the actual data to a sub-pixel dot.
+NULL_ISLAND_EPSILON = 0.0001
 
 
 @register
 class MapPoints(Visualizer):
-    """Geographic scatter of points."""
+    """Geographic scatter of points.
+
+    ``drop_invalid_coords`` (on by default) filters nulls, out-of-range values and
+    the (0, 0) sentinel. Note this also drops the rare genuine reading that sits
+    exactly on the equator or the prime meridian; turn it off for data where that
+    matters.
+    """
 
     id: ClassVar[str] = "viz.map_points"
     title: ClassVar[str] = "Map (points)"
     Params: ClassVar[type[BaseModel]] = MapParams
     accepts: ClassVar[Accepts] = Accepts(semantic_types=("geo.lat",))
 
+    @staticmethod
+    def _coord_filters(p: MapParams) -> list[Filter]:
+        if not p.drop_invalid_coords:
+            return []
+        eps = [-NULL_ISLAND_EPSILON, NULL_ISLAND_EPSILON]
+        return [
+            Filter(column=p.lat_column, op="is_not_null"),
+            Filter(column=p.lng_column, op="is_not_null"),
+            Filter(column=p.lat_column, op="between", value=[-90, 90]),
+            Filter(column=p.lng_column, op="between", value=[-180, 180]),
+            Filter(column=p.lat_column, op="not_between", value=eps),
+            Filter(column=p.lng_column, op="not_between", value=eps),
+        ]
+
     def spec(self, ctx: VizCtx) -> VizSpec:
         p: MapParams = ctx.params
+        if p.animate_by:
+            # Caught here so the user gets a sentence rather than a DuckDB binder
+            # error about date_trunc's argument types.
+            column = ctx.profile.column(p.animate_by)
+            if column is None:
+                raise ValueError(f"cannot animate by {p.animate_by!r}: no such column")
+            if not column.physical_type.upper().startswith(("TIMESTAMP", "DATE")):
+                raise ValueError(
+                    f"cannot animate by {p.animate_by!r}: it is "
+                    f"{column.physical_type}, not a date or timestamp"
+                )
+        filters = self._coord_filters(p)
         select = [Select(column=p.lat_column, alias="lat"),
                   Select(column=p.lng_column, alias="lng")]
         if p.measure:
             select.append(Select(column=p.measure, alias="value"))
         animate = None
-        query = QuerySpec(dataset="", select=select, limit=p.limit)
+        query = QuerySpec(dataset="", select=select, filters=filters, limit=p.limit)
         if p.animate_by:
             # Aggregate into frames so the scrubber costs no extra queries.
             query = QuerySpec(
@@ -173,6 +218,7 @@ class MapPoints(Visualizer):
                                        alias="frame"),
                 group_by=[p.lat_column, p.lng_column],
                 select=[Select(column="*", agg="count", alias="value")],
+                filters=filters,
                 limit=p.limit,
             )
             animate = Animate(field="frame", label=p.animate_by)

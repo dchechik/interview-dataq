@@ -41,8 +41,15 @@ class VizSpec(BaseModel):
 
 
 class RenderedViz(BaseModel):
-    """A ``VizSpec`` with its data attached -- what ``/api/viz/render`` returns."""
+    """A ``VizSpec`` with its data attached -- what ``/api/inspect`` returns.
+
+    ``sql`` and ``elapsed_ms`` are carried so a chart can show exactly what it was
+    built from. A chart whose provenance you cannot inspect is hard to trust.
+    """
 
     spec: VizSpec
     data: list[dict[str, Any]]
     row_count: int
+    sql: str = ""
+    elapsed_ms: float = 0.0
+    truncated: bool = False

@@ -23,10 +23,15 @@ from ..plugins.base import REGISTRY
 from ..query.spec import QuerySpec
 from . import inspect as inspect_service
 from .context import AppContext
+from .model import PRICE_IN_PER_MTOK, PRICE_OUT_PER_MTOK
 from .operations import OperationRequest, submit_operation
 from .query import rows_as_dicts, run_query
 
 Scope = Literal["read_only", "full"]
+
+# Matches the max_tokens the loop requests, used only for the cost ceiling shown
+# to the user before they start a run.
+MAX_OUTPUT_TOKENS_PER_TURN = 8000
 
 SYSTEM_PROMPT = """\
 You are the analysis agent inside DataQ, a tool for exploring datasets.
@@ -329,6 +334,64 @@ class AnalysisAgent:
                 "no ANTHROPIC_API_KEY configured; the analysis agent needs one"
             )
         return Anthropic(api_key=self.ctx.settings.anthropic_api_key)
+
+    def estimate(self, message: str, history: list[dict] | None = None) -> dict:
+        """What one turn will cost, before anything is spent.
+
+        Counts the *first* request only — the system prompt, the tool schemas and
+        the conversation. An agent loop makes several such requests and each one
+        resends the growing history, so the run total is a multiple of this; the
+        projection below is deliberately labelled as a rough upper bound rather
+        than a promise.
+        """
+        system_tokens = tool_tokens = message_tokens = 0
+        exact = False
+
+        if self.ctx.settings.anthropic_api_key:
+            try:
+                client = self._client()
+                counted = client.messages.count_tokens(
+                    model=self.ctx.settings.model,
+                    system=[{"type": "text", "text": SYSTEM_PROMPT}],
+                    tools=[t.definition() for t in self.tools.values()],
+                    messages=[*(history or []), {"role": "user", "content": message}],
+                )
+                total = counted.input_tokens
+                exact = True
+            except Exception:  # noqa: BLE001 - fall back to the estimate below
+                exact = False
+
+        if not exact:
+            # ~4 characters per token is close enough to warn on the right order
+            # of magnitude when the API cannot be reached.
+            def rough(text: str) -> int:
+                return max(1, len(text) // 4)
+
+            system_tokens = rough(SYSTEM_PROMPT)
+            tool_tokens = sum(
+                rough(json.dumps(t.definition())) for t in self.tools.values()
+            )
+            message_tokens = rough(message) + sum(
+                rough(json.dumps(h)) for h in (history or [])
+            )
+            total = system_tokens + tool_tokens + message_tokens
+
+        in_cost = total / 1e6 * PRICE_IN_PER_MTOK
+        # A loop that actually uses its tools resends history each turn, so the
+        # worst case grows super-linearly. Quote the ceiling, not the floor.
+        worst_case_in = in_cost * self.max_turns * 1.5
+        worst_case_out = MAX_OUTPUT_TOKENS_PER_TURN * self.max_turns / 1e6 * PRICE_OUT_PER_MTOK
+
+        return {
+            "input_tokens": total,
+            "exact": exact,
+            "model": self.ctx.settings.model,
+            "tools": len(self.tools),
+            "max_turns": self.max_turns,
+            "first_request_usd": round(in_cost, 4),
+            "worst_case_usd": round(worst_case_in + worst_case_out, 2),
+            "has_api_key": bool(self.ctx.settings.anthropic_api_key),
+        }
 
     def call_tool(self, name: str, payload: dict[str, Any]) -> Any:
         tool = self.tools.get(name)

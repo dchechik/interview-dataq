@@ -455,6 +455,13 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - a flat route table
             for t in build_tools(context(), scope="full")
         ]
 
+    @app.post("/api/agent/estimate")
+    def agent_estimate(req: AgentChatRequest) -> dict:
+        """What a run will cost, so the user can decline before spending anything."""
+        from ..services.agent import AnalysisAgent
+
+        return AnalysisAgent(context(), scope="full").estimate(req.message, req.history)
+
     @app.post("/api/agent/chat")
     async def agent_chat(req: AgentChatRequest) -> StreamingResponse:
         """Stream the agent's work as SSE so the user watches tools run."""

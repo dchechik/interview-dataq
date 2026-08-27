@@ -3,6 +3,7 @@ import { useState } from 'react'
 
 import { api } from '../api/client'
 import { useDashboards } from '../api/hooks'
+import { QueryDebug } from '../components/QueryDebug'
 import { VizRenderer } from '../renderers'
 
 /**
@@ -71,11 +72,20 @@ export function DashboardsPage() {
                 </p>
               )}
               {q.data && (
-                <VizRenderer
-                  spec={panel}
-                  data={rows}
-                  height={panel.renderer === 'maplibre' ? 380 : 260}
-                />
+                <>
+                  <VizRenderer
+                    spec={panel}
+                    data={rows}
+                    height={panel.renderer === 'maplibre' ? 380 : 260}
+                  />
+                  <QueryDebug
+                    sql={q.data.sql}
+                    spec={panel.query}
+                    rowCount={q.data.row_count}
+                    elapsedMs={q.data.elapsed_ms}
+                    truncated={q.data.truncated}
+                  />
+                </>
               )}
             </section>
           )

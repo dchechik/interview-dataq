@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
+import { api, ApiError } from '../api/client'
 import { useDataset } from '../api/hooks'
-import type { VizSpec } from '../api/types'
+import type { AgentEstimate, VizSpec } from '../api/types'
 import { VizRenderer } from '../renderers'
 
 interface Turn {
@@ -55,6 +56,92 @@ function ToolCall({ turn, result }: { turn: Turn; result?: Turn }) {
 }
 
 /**
+ * Shown before any request is sent, because the run costs real money and the
+ * user is the one paying. The first-request count is what we can state exactly;
+ * the run total depends on how many tools the model decides to call, so it is
+ * given as a ceiling rather than a promise.
+ */
+function ConfirmRun({
+  estimate,
+  message,
+  onConfirm,
+  onCancel,
+}: {
+  estimate: AgentEstimate
+  message: string
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+      onClick={onCancel}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Confirm agent run"
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
+      >
+        <h2 className="text-base font-semibold text-slate-900">Run the agent?</h2>
+        <p className="mt-1 truncate text-sm text-slate-500">“{message}”</p>
+
+        <dl className="mt-4 space-y-1.5 text-sm">
+          <div className="flex justify-between">
+            <dt className="text-slate-500">Tokens in first request</dt>
+            <dd className="font-mono tabular-nums text-slate-800">
+              {estimate.input_tokens.toLocaleString()}
+              {!estimate.exact && <span className="ml-1 text-amber-600">approx</span>}
+            </dd>
+          </div>
+          <div className="flex justify-between">
+            <dt className="text-slate-500">That request costs</dt>
+            <dd className="font-mono tabular-nums text-slate-800">
+              ${estimate.first_request_usd.toFixed(4)}
+            </dd>
+          </div>
+          <div className="flex justify-between">
+            <dt className="text-slate-500">Whole run, at most</dt>
+            <dd className="font-mono tabular-nums font-medium text-slate-900">
+              ${estimate.worst_case_usd.toFixed(2)}
+            </dd>
+          </div>
+          <div className="flex justify-between">
+            <dt className="text-slate-500">Model</dt>
+            <dd className="font-mono text-xs text-slate-600">{estimate.model}</dd>
+          </div>
+        </dl>
+
+        <p className="mt-3 text-xs text-slate-500">
+          The agent may call up to {estimate.max_turns} rounds of its {estimate.tools} tools,
+          resending the conversation each time — so the real cost lands between these two
+          figures.
+          {!estimate.exact && ' Token count is approximate: the API could not be reached to count it exactly.'}
+        </p>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="rounded bg-slate-900 px-3 py-1.5 text-sm text-white hover:bg-slate-800"
+          >
+            Run it
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
  * The agent chat. Turns arrive over SSE so tool calls appear as they run rather
  * than after the whole thing finishes -- the user watches the work.
  */
@@ -64,11 +151,28 @@ export function AgentPage() {
   const [turns, setTurns] = useState<Turn[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const [pending, setPending] = useState<{ message: string; estimate: AgentEstimate } | null>(
+    null,
+  )
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Fetched directly rather than scanned out of the list, so a deep link
   // resolves the name without waiting for every dataset.
   const { data: dataset } = useDataset(id)
+
+  /** Price the run and ask, rather than spending the user's money on their behalf. */
+  async function ask(message: string) {
+    if (!message.trim() || busy) return
+    try {
+      const estimate = await api.agentEstimate(message)
+      setPending({ message, estimate })
+    } catch (e) {
+      setTurns((t) => [
+        ...t,
+        { type: 'error', text: e instanceof ApiError ? e.message : String(e) },
+      ])
+    }
+  }
 
   async function send(message: string) {
     if (!message.trim() || busy) return
@@ -116,6 +220,18 @@ export function AgentPage() {
 
   return (
     <div className="space-y-4">
+      {pending && (
+        <ConfirmRun
+          estimate={pending.estimate}
+          message={pending.message}
+          onCancel={() => setPending(null)}
+          onConfirm={() => {
+            const { message } = pending
+            setPending(null)
+            send(message)
+          }}
+        />
+      )}
       <div className="flex items-center gap-3">
         {id && (
           <Link to={`/datasets/${id}`} className="text-sm text-slate-500 hover:text-slate-800">
@@ -140,7 +256,7 @@ export function AgentPage() {
                 <button
                   key={e}
                   type="button"
-                  onClick={() => send(e)}
+                  onClick={() => ask(e)}
                   className="rounded border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
                 >
                   {e}
@@ -198,14 +314,14 @@ export function AgentPage() {
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && send(input)}
+          onKeyDown={(e) => e.key === 'Enter' && ask(input)}
           placeholder="Ask about your data…"
           disabled={busy}
           className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
         />
         <button
           type="button"
-          onClick={() => send(input)}
+          onClick={() => ask(input)}
           disabled={busy || !input.trim()}
           className="rounded bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-40"
         >
