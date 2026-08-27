@@ -19,3 +19,7 @@ data/
 *.sqlite-wal
 *.sqlite-shm
 .env
+
+# Exported conversation transcripts
+[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.txt
+sample-data/

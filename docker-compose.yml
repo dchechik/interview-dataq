@@ -1,0 +1,17 @@
+services:
+  dataq:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - dataq-data:/data
+    environment:
+      # parquet: immutable Parquet parts, resumable jobs, S3-portable (default)
+      # duckdb:  one .duckdb file -- simplest to host, but single-writer
+      DATAQ_STORAGE: ${DATAQ_STORAGE:-parquet}
+      DATAQ_DATA_DIR: /data
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    restart: unless-stopped
+
+volumes:
+  dataq-data:
