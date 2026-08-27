@@ -184,3 +184,41 @@ def test_unknown_dataset_is_404(client):
     assert client.get("/api/datasets/nope").status_code == 404
     assert client.get("/api/datasets/nope/profile").status_code == 404
     assert client.get("/api/plugins?applicable_to=nope").status_code == 404
+
+
+def test_spa_deep_links_fall_back_to_index(app_ctx, tmp_path):
+    """A client-side route must survive a refresh or a shared link.
+
+    StaticFiles(html=True) only serves index.html for *directory* paths, so
+    without a fallback /datasets/abc/explore 404s: in-app navigation works but
+    reloading the page does not.
+    """
+    from fastapi.testclient import TestClient
+
+    import dataq.api.app as app_module
+
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<!doctype html><title>DataQ</title>")
+    (dist / "assets").mkdir()
+    (dist / "assets" / "app.js").write_text("console.log(1)")
+
+    app_ctx.settings.static_dir = dist
+    app = create_app(ctx=app_ctx)
+    try:
+        with TestClient(app) as client:
+            assert client.get("/").status_code == 200
+            # Client-side routes resolve to the shell.
+            for route in ("/datasets", "/datasets/abc123/explore", "/dashboards", "/ask"):
+                r = client.get(route)
+                assert r.status_code == 200, route
+                assert "DataQ" in r.text, route
+            # Real assets are still served as themselves.
+            assert client.get("/assets/app.js").text == "console.log(1)"
+            # An unknown API path stays a 404 rather than becoming an HTML page,
+            # which would surface at the caller as a JSON parse error.
+            missing = client.get("/api/does-not-exist")
+            assert missing.status_code == 404
+            assert "<!doctype html>" not in missing.text.lower()
+    finally:
+        app_module.CTX = None

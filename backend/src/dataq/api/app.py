@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import dataq.plugins.builtin  # noqa: F401  (registers built-in plugins)
 
@@ -72,7 +73,9 @@ def create_app(ctx: AppContext | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     _register_routes(app)
-    _mount_frontend(app)
+    # Take settings from the injected context when there is one; falling back to
+    # the cached globals here would ignore the caller's configuration.
+    _mount_frontend(app, ctx.settings if ctx is not None else get_settings())
     return app
 
 
@@ -523,20 +526,40 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - a flat route table
         return {"id": d.id, "name": d.name}
 
 
-def _mount_frontend(app: FastAPI) -> None:
+class SpaStaticFiles(StaticFiles):
+    """Static files with a single-page-app fallback.
+
+    ``html=True`` alone only serves index.html for directory paths, so a client
+    -side route like /datasets/abc/explore 404s -- in-app navigation works but a
+    refresh or a shared link does not. Unknown paths therefore fall back to
+    index.html and let the router resolve them.
+
+    Unknown ``/api/`` paths keep their 404: answering them with an HTML page
+    would turn a typo'd endpoint into a confusing parse error at the caller.
+    """
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404 or path.startswith("api/"):
+                raise
+            return await super().get_response("index.html", scope)
+
+
+def _mount_frontend(app: FastAPI, settings) -> None:
     """Serve the built SPA in production, so the whole app is one container.
 
-    Mounted last so it never shadows /api. ``html=True`` makes StaticFiles fall
-    back to index.html, which is what a client-side router needs on deep links.
+    Mounted last so it never shadows /api.
     """
-    configured = get_settings().static_dir
+    configured = settings.static_dir
     candidates = [configured] if configured else [
         Path("/app/static"),
         Path(__file__).resolve().parents[4] / "frontend" / "dist",
     ]
     for dist in candidates:
         if dist and dist.is_dir():
-            app.mount("/", StaticFiles(directory=dist, html=True), name="frontend")
+            app.mount("/", SpaStaticFiles(directory=dist, html=True), name="frontend")
             return
 
 

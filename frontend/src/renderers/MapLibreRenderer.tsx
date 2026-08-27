@@ -2,9 +2,17 @@
 // react-map-gl 8.x still expects.
 import {
   Map as MapLibreMap,
+  setWorkerUrl,
   type GeoJSONSource,
   type StyleSpecification,
 } from 'maplibre-gl'
+// maplibre resolves its worker at runtime as
+// `new URL('./maplibre-gl-worker.mjs', import.meta.url)` with a computed
+// filename, which no bundler can see -- so the asset is never emitted and the
+// worker 404s. Importing it with ?url makes Vite emit and fingerprint it, then
+// setWorkerUrl points maplibre at the real thing. Without this, GeoJSON layers
+// draw nothing while the raster basemap (which needs no worker) looks fine.
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type { RendererProps } from './index'
@@ -22,6 +30,8 @@ import type { RendererProps } from './index'
  * dep pre-bundling broke maplibre's Web Worker URL, and GeoJSON is tiled in that
  * worker. See `optimizeDeps.exclude` in vite.config.ts.
  */
+
+setWorkerUrl(maplibreWorkerUrl)
 
 const STYLE_URL = import.meta.env.VITE_MAP_STYLE as string | undefined
 
