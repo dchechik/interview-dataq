@@ -313,9 +313,15 @@ export function DatasetPage() {
           </Link>
           <Link
             to={`/datasets/${id}/explore`}
-            className="rounded bg-slate-900 px-3 py-1.5 text-sm text-white hover:bg-slate-800"
+            className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
           >
             Explore
+          </Link>
+          <Link
+            to={`/datasets/${id}/ask`}
+            className="rounded bg-slate-900 px-3 py-1.5 text-sm text-white hover:bg-slate-800"
+          >
+            Ask
           </Link>
         </div>
       </div>

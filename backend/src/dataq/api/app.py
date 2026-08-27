@@ -108,6 +108,11 @@ class PreviewRequest(BaseModel):
     limit: int = 20
 
 
+class AgentChatRequest(BaseModel):
+    message: str
+    history: list[dict[str, Any]] = []
+
+
 class DashboardRequest(BaseModel):
     id: str | None = None
     name: str
@@ -352,6 +357,52 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - a flat route table
                 if job.status in TERMINAL_JOB_STATUSES:
                     return
                 await asyncio.sleep(0.5)
+
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    # --- agent -----------------------------------------------------------
+    @app.get("/api/agent/tools")
+    def agent_tools() -> list[dict]:
+        """The agent's tool surface, for transparency in the UI."""
+        from ..services.agent import build_tools
+
+        return [
+            {"name": t.name, "description": t.description, "scope": t.scope}
+            for t in build_tools(context(), scope="full")
+        ]
+
+    @app.post("/api/agent/chat")
+    async def agent_chat(req: AgentChatRequest) -> StreamingResponse:
+        """Stream the agent's work as SSE so the user watches tools run."""
+        from ..services.agent import AnalysisAgent
+
+        ctx = context()
+
+        async def events():
+            try:
+                agent = AnalysisAgent(ctx, scope="full")
+            except Exception as exc:  # noqa: BLE001 - e.g. no API key configured
+                yield f"data: {json.dumps({'type': 'error', 'text': str(exc)})}\n\n"
+                return
+            try:
+                # The SDK call is synchronous; run the generator in a worker thread
+                # so the event loop keeps serving other requests.
+                for turn in await asyncio.to_thread(
+                    lambda: list(agent.run(req.message, req.history))
+                ):
+                    payload = {
+                        "type": turn.type, "text": turn.text,
+                        "tool_name": turn.tool_name, "tool_input": turn.tool_input,
+                        "tool_result": turn.tool_result,
+                    }
+                    yield f"data: {json.dumps(payload, default=str)}\n\n"
+            except Exception as exc:  # noqa: BLE001
+                err = {"type": "error", "text": f"{type(exc).__name__}: {exc}"}
+                yield f"data: {json.dumps(err)}\n\n"
 
         return StreamingResponse(
             events(),

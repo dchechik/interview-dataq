@@ -23,6 +23,9 @@ export function App() {
             <NavLink to="/dashboards" className={linkClass}>
               Dashboards
             </NavLink>
+            <NavLink to="/ask" className={linkClass}>
+              Ask
+            </NavLink>
           </nav>
           <div className="ml-auto text-xs text-slate-500">
             {health ? (

@@ -174,9 +174,41 @@ make lint     # ruff + mypy, tsc + oxlint
 make types    # regenerate frontend types from the live OpenAPI document
 ```
 
+## The agent
+
+The chat agent binds its tools to the **service layer**, not to HTTP, so it and the
+API cannot drift apart — they are two front ends over the same functions. Tool calls
+stream to the UI as they run, so the user watches the work rather than waiting on a
+verdict.
+
+Two permission scopes exist. `full` (the chat agent, driven by a human who can see
+and cancel jobs) can create aggregates, joins and transforms. `read_only` — handed to
+any agent-*backed plugin* — can query, profile and suggest but has no job-creating
+tools at all, which is the recursion guard: a plugin cannot spawn unbounded work.
+
+Set `ANTHROPIC_API_KEY` to enable it. Everything else runs without one.
+
 ## Status
 
-Import, profiling, semantic typing, transforms in all three modes, the query layer,
-charts and maps, aggregates and joins are implemented and tested. The in-app analysis
-agent is the next piece; the tool surface it will bind to is the service layer that
-the HTTP API already calls.
+Implemented and tested: import, profiling and semantic typing, transforms in all
+three execution modes, the query layer, charts and maps, aggregates, joins, the
+dashboard, and the agent.
+
+The agent's tool surface and loop mechanics are covered by tests using a scripted
+model client (tool dispatch, the `tool_result` round-trip, parallel calls, refusals,
+the turn cap) — including the spec's cybersecurity workflow driven end to end through
+agent tools. The loop has **not** been exercised against the live model; that needs an
+API key.
+
+Known gaps, in rough priority order:
+
+- `dry_run` is defined on `OperationRequest` and documented as the way to preview an
+  expensive extraction, but is not implemented yet. It matters most for `external`
+  plugins, which is exactly where it is missing.
+- The `external` transform ships one real plugin (`extract.entities`); it has been
+  exercised against a fake client, not a live model.
+- Job resume is implemented and tested at the storage layer, but nothing yet
+  automatically restarts an interrupted job on startup — resume is a manual re-submit.
+- The frontend has no test suite.
+- Single-process only. Multi-worker deployment needs `DATAQ_STORAGE=parquet` and an
+  out-of-process job runner.

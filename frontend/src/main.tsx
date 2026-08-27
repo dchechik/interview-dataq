@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 
 import { App } from './App'
+import { AgentPage } from './pages/AgentPage'
 import './index.css'
 import { DashboardsPage } from './pages/DashboardsPage'
 import { DatasetPage } from './pages/DatasetPage'
@@ -26,6 +27,8 @@ createRoot(document.getElementById('root')!).render(
             <Route path="datasets/:id" element={<DatasetPage />} />
             <Route path="datasets/:id/query" element={<QueryPage />} />
             <Route path="datasets/:id/explore" element={<ExplorePage />} />
+            <Route path="datasets/:id/ask" element={<AgentPage />} />
+            <Route path="ask" element={<AgentPage />} />
             <Route path="dashboards" element={<DashboardsPage />} />
           </Route>
         </Routes>
