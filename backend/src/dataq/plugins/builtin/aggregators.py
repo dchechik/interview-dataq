@@ -12,7 +12,7 @@ from typing import ClassVar
 
 from pydantic import BaseModel, Field
 
-from ...query.spec import Interval, QuerySpec, Select, Sort, TimeBucket
+from ...query.spec import Interval, QuerySpec, Select, Sort, TimeBucket, TimePart
 from ..base import Accepts, Produces, register
 from ..kinds import AggregateCtx, AggregatePlan, Aggregator
 
@@ -61,14 +61,30 @@ class FrequencyAggregate(Aggregator):
 
 class TimeRollupParams(BaseModel):
     time_column: str
-    interval: Interval = "day"
+    interval: Interval = Field(
+        default="day",
+        description="Bucket size when rolling up the timeline (ignored if 'part' is set)",
+    )
+    part: TimePart | None = Field(
+        default=None,
+        description=(
+            "Optional: roll up by a repeating slice of time instead of the timeline — "
+            "e.g. hour_of_day groups every 1pm together, whatever the date"
+        ),
+    )
     dimensions: list[str] = []
     measure: str | None = Field(default=None, description="Column to sum; counts when omitted")
 
 
 @register
 class TimeRollupAggregate(Aggregator):
-    """Roll events up into time buckets, optionally split by dimensions."""
+    """Roll events up into time buckets, optionally split by dimensions.
+
+    By default this rolls up along the timeline: one bucket per hour, day or month
+    of actual elapsed time. Setting ``part`` switches to a repeating slice, so all
+    of a dataset's 1pms collapse into a single ``1pm`` bucket — which is how you
+    ask "when in the day is this busiest?" rather than "what happened that day?".
+    """
 
     id: ClassVar[str] = "agg.time_rollup"
     title: ClassVar[str] = "Roll up over time"
@@ -82,13 +98,17 @@ class TimeRollupAggregate(Aggregator):
         if p.measure:
             select.append(Select(column=p.measure, agg="sum", alias=f"sum_{p.measure}"))
             select.append(Select(column=p.measure, agg="avg", alias=f"avg_{p.measure}"))
+        bucket = TimeBucket(column=p.time_column, interval=p.interval, part=p.part)
+        # In part mode the label ("Thu", "1pm") does not sort usefully as text, so
+        # order by the ordinal the compiler emits alongside it.
+        order_column = bucket.ordinal_alias if p.part else bucket.alias
         return AggregatePlan(
             spec=QuerySpec(
                 dataset="",
-                time_bucket=TimeBucket(column=p.time_column, interval=p.interval),
+                time_bucket=bucket,
                 group_by=list(p.dimensions),
                 select=select,
-                order_by=[Sort(column="bucket")],
+                order_by=[Sort(column=order_column)],
                 limit=1_000_000,
             )
         )

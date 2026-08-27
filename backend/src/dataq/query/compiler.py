@@ -31,6 +31,55 @@ _AGG_SQL: dict[str, str] = {
 _INTERVALS = {"minute", "hour", "day", "week", "month", "quarter", "year"}
 
 
+@dataclass(frozen=True)
+class _PartSpec:
+    """How to render one cyclical time part: a sortable ordinal and a label.
+
+    The label is what a reader sees ("1pm", "Thu"); the ordinal is what the chart
+    sorts on, since those labels do not sort usefully as text.
+    """
+
+    ordinal: str   # format string taking the quoted column
+    label: str
+    title: str
+
+    def ordinal_sql(self, column: str) -> str:
+        return self.ordinal.format(c=column)
+
+    def label_sql(self, column: str) -> str:
+        return self.label.format(c=column)
+
+
+TIME_PARTS: dict[str, _PartSpec] = {
+    "minute_of_hour": _PartSpec(
+        "date_part('minute', {c})", "lpad(CAST(date_part('minute', {c}) AS VARCHAR), 2, '0')",
+        "Minute of hour",
+    ),
+    # ltrim strips the leading zero from %I so 01PM reads as 1pm.
+    "hour_of_day": _PartSpec(
+        "date_part('hour', {c})", "lower(ltrim(strftime({c}, '%I%p'), '0'))", "Hour of day",
+    ),
+    # isodow is 1=Monday..7=Sunday, so the week reads in the expected order.
+    "day_of_week": _PartSpec(
+        "date_part('isodow', {c})", "strftime({c}, '%a')", "Day of week",
+    ),
+    "day_of_month": _PartSpec(
+        "date_part('day', {c})", "CAST(date_part('day', {c}) AS VARCHAR)", "Day of month",
+    ),
+    "month_of_year": _PartSpec(
+        "date_part('month', {c})", "strftime({c}, '%b')", "Month of year",
+    ),
+    "quarter_of_year": _PartSpec(
+        "date_part('quarter', {c})", "'Q' || CAST(date_part('quarter', {c}) AS VARCHAR)",
+        "Quarter of year",
+    ),
+    "week_of_year": _PartSpec(
+        "date_part('week', {c})", "'W' || CAST(date_part('week', {c}) AS VARCHAR)",
+        "Week of year",
+    ),
+}
+
+
 class QueryError(ValueError):
     pass
 
@@ -80,12 +129,26 @@ class QueryCompiler:
 
         if spec.time_bucket is not None:
             tb = spec.time_bucket
-            if tb.interval not in _INTERVALS:
-                raise QueryError(f"bad interval: {tb.interval}")
-            expr = f"date_trunc('{tb.interval}', {col(tb.column)})"
-            projection.append(f"{expr} AS {quote_ident(tb.alias)}")
-            group_exprs.append(expr)
-            output_columns.append(tb.alias)
+            if tb.part is not None:
+                part = TIME_PARTS.get(tb.part)
+                if part is None:
+                    raise QueryError(f"bad time part: {tb.part}")
+                c = col(tb.column)
+                label_expr = part.label_sql(c)
+                ordinal_expr = part.ordinal_sql(c)
+                projection.append(f"{label_expr} AS {quote_ident(tb.alias)}")
+                projection.append(f"{ordinal_expr} AS {quote_ident(tb.ordinal_alias)}")
+                # Both are grouped: the ordinal is functionally dependent on the
+                # label, but grouping it too makes it orderable without an aggregate.
+                group_exprs += [label_expr, ordinal_expr]
+                output_columns += [tb.alias, tb.ordinal_alias]
+            else:
+                if tb.interval not in _INTERVALS:
+                    raise QueryError(f"bad interval: {tb.interval}")
+                expr = f"date_trunc('{tb.interval}', {col(tb.column)})"
+                projection.append(f"{expr} AS {quote_ident(tb.alias)}")
+                group_exprs.append(expr)
+                output_columns.append(tb.alias)
 
         for name in spec.group_by:
             projection.append(f"{col(name)} AS {quote_ident(name)}")

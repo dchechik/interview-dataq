@@ -24,6 +24,11 @@ function effective(schema: JsonSchema): JsonSchema {
   return schema
 }
 
+/** `hour_of_day` reads as "hour of day" in a menu without losing the sent value. */
+function humanize(value: unknown): string {
+  return String(value).replace(/_/g, ' ')
+}
+
 function looksLikeColumn(name: string): boolean {
   return (
     name === 'column' ||
@@ -77,11 +82,14 @@ export function SchemaForm({ schema, value, onChange, columns = [] }: Props) {
               <select
                 className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
                 value={String(current ?? '')}
-                onChange={(e) => set(key, e.target.value)}
+                // An optional enum must be un-settable, so "" maps back to null
+                // rather than being sent as an empty string the backend rejects.
+                onChange={(e) => set(key, e.target.value === '' ? null : e.target.value)}
               >
+                {!required.has(key) && <option value="">— none —</option>}
                 {field.enum.map((o) => (
                   <option key={String(o)} value={String(o)}>
-                    {String(o)}
+                    {humanize(o)}
                   </option>
                 ))}
               </select>

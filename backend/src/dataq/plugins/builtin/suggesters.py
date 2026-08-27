@@ -163,6 +163,28 @@ class AggregateSuggester(Suggester):
                     "measure": measures[0].name if measures else None,
                 }),
             ))
+            # Cyclical rollups answer a different question from the timeline one:
+            # not "what happened that day" but "when is this busiest". Suggested
+            # explicitly because a user would not otherwise know to ask.
+            out.append(Suggestion(
+                title="What time of day is busiest?",
+                rationale=f"groups every hour of {times[0].name} together, "
+                          "so all the 1pms count as one bucket",
+                kind="aggregate", score=0.7,
+                action=_operation("aggregate", "agg.time_rollup", p.dataset_id, {
+                    "time_column": times[0].name, "part": "hour_of_day",
+                    "measure": measures[0].name if measures else None,
+                }),
+            ))
+            out.append(Suggestion(
+                title="Which day of the week is busiest?",
+                rationale=f"groups {times[0].name} by weekday across the whole dataset",
+                kind="aggregate", score=0.65,
+                action=_operation("aggregate", "agg.time_rollup", p.dataset_id, {
+                    "time_column": times[0].name, "part": "day_of_week",
+                    "measure": measures[0].name if measures else None,
+                }),
+            ))
 
         for c in p.columns:
             if c.role == "dimension" and c.stats and 0 < c.stats.distinct_count <= 10_000:

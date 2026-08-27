@@ -23,6 +23,19 @@ AggFunc = Literal[
 
 Interval = Literal["minute", "hour", "day", "week", "month", "quarter", "year"]
 
+# A *cyclical* slice of a timestamp: every 1pm across the whole dataset collapses
+# into one bucket, rather than each date's 1pm staying separate. This is what
+# "busiest hour" or "Thursday nights" needs, which truncation cannot express.
+TimePart = Literal[
+    "minute_of_hour",
+    "hour_of_day",
+    "day_of_week",
+    "day_of_month",
+    "month_of_year",
+    "quarter_of_year",
+    "week_of_year",
+]
+
 
 class Filter(BaseModel):
     column: str
@@ -31,11 +44,27 @@ class Filter(BaseModel):
 
 
 class TimeBucket(BaseModel):
-    """Truncate a temporal column into buckets and group by the result."""
+    """Group a temporal column into buckets.
+
+    Two modes. By default the column is *truncated* to ``interval``, so each
+    calendar hour or day is its own bucket (``2012-01-01 13:00``). Setting
+    ``part`` instead takes a *cyclical* slice, collapsing every occurrence of that
+    slice together (``1pm``) — which is how you ask for the busiest hour of the
+    day, or Thursday-night activity, across a whole dataset.
+
+    In part mode the compiler emits a readable label under ``alias`` plus an
+    ``{alias}_ord`` ordinal, because "Thu" sorts alphabetically and would
+    otherwise scramble the chart.
+    """
 
     column: str
     interval: Interval = "day"
+    part: TimePart | None = None
     alias: str = "bucket"
+
+    @property
+    def ordinal_alias(self) -> str:
+        return f"{self.alias}_ord"
 
 
 class Select(BaseModel):
