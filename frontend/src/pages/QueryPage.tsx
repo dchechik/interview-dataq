@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
 import { useDataset, useProfile } from '../api/hooks'
 import type { Filter, QueryResult, QuerySpec, Select } from '../api/types'
-import { QueryDebug } from '../components/QueryDebug'
+import { ChartInspector } from '../components/ChartInspector'
 import { TableRenderer } from '../renderers/TableRenderer'
 
 const OPS = ['=', '!=', '<', '<=', '>', '>=', 'in', 'contains', 'starts_with', 'is_null',
@@ -329,9 +329,9 @@ export function QueryPage() {
             )}
             height={480}
           />
-          <QueryDebug
+          <ChartInspector
             sql={result.sql}
-            spec={mode === 'sql' ? undefined : spec}
+            query={mode === 'sql' ? undefined : spec}
             rowCount={result.row_count}
             elapsedMs={result.elapsed_ms}
             truncated={result.truncated}

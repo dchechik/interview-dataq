@@ -53,9 +53,22 @@ function compileUnit(chart: ChartSpec): Record<string, unknown> {
   }
   const unit: Record<string, unknown> = { mark: chart.mark }
   if (Object.keys(encoding).length) unit.encoding = encoding
-  // The escape hatch is merged last so a plugin can restyle the mark (a colour,
+  if (!chart.raw_vega_lite) return unit
+
+  // The escape hatch is merged last so a plugin can restyle a mark (a colour,
   // point markers) without restating the encodings.
-  return chart.raw_vega_lite ? merge(unit, chart.raw_vega_lite) : unit
+  const merged = merge(unit, chart.raw_vega_lite)
+
+  // ...but the mark *type* always comes from `chart.mark`. Letting raw override
+  // it would give one property two sources of truth, and the symptom is subtle:
+  // the editor's mark dropdown appears to do nothing.
+  const rawMark = (chart.raw_vega_lite as { mark?: unknown }).mark
+  if (rawMark && typeof rawMark === 'object' && !Array.isArray(rawMark)) {
+    merged.mark = { ...(rawMark as Record<string, unknown>), type: chart.mark }
+  } else {
+    merged.mark = chart.mark
+  }
+  return merged
 }
 
 export function compileChartSpec(chart: ChartSpec): Record<string, unknown> {

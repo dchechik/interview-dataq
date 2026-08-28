@@ -3,7 +3,7 @@ import { useState } from 'react'
 
 import { api } from '../api/client'
 import { useDashboards } from '../api/hooks'
-import { QueryDebug } from '../components/QueryDebug'
+import { ChartInspector } from '../components/ChartInspector'
 import { VizRenderer } from '../renderers'
 
 /**
@@ -78,9 +78,12 @@ export function DashboardsPage() {
                     data={rows}
                     height={panel.renderer === 'maplibre' ? 380 : 260}
                   />
-                  <QueryDebug
+                  <ChartInspector
+                    data={rows}
                     sql={q.data.sql}
-                    spec={panel.query}
+                    query={panel.query}
+                    chart={panel.chart}
+                    rawSpec={panel.spec}
                     rowCount={q.data.row_count}
                     elapsedMs={q.data.elapsed_ms}
                     truncated={q.data.truncated}

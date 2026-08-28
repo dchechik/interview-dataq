@@ -3,9 +3,10 @@ import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import { api } from '../api/client'
-import { keys, useDataset, useSuggestions } from '../api/hooks'
-import type { RenderedViz, Suggestion } from '../api/types'
-import { QueryDebug } from '../components/QueryDebug'
+import { keys, useDataset, useOperation, useSuggestions } from '../api/hooks'
+import type { ChartSpec, RenderedViz, Suggestion } from '../api/types'
+import { ChartEditor } from '../components/ChartEditor'
+import { ChartInspector } from '../components/ChartInspector'
 import { VizRenderer } from '../renderers'
 
 /**
@@ -19,6 +20,33 @@ export function ExplorePage() {
   const { data: dataset } = useDataset(id)
   const { data: suggestions } = useSuggestions(id, 'viz')
   const [saved, setSaved] = useState<string | null>(null)
+  // Local edits to a suggested chart, by panel index. Kept here rather than in
+  // the panel so "Reset" can drop back to whatever the suggester proposed.
+  const [edited, setEdited] = useState<Record<number, ChartSpec>>({})
+  const [editing, setEditing] = useState<number | null>(null)
+  const operation = useOperation()
+
+  /**
+   * Materialise what a chart drew. The chart already has a QuerySpec; this just
+   * persists it, which is what turns a transient picture into a dataset that
+   * carries semantic types and can be joined.
+   */
+  async function saveAsDataset(viz: RenderedViz) {
+    if (!viz.spec.query.group_by?.length && !viz.spec.query.time_bucket) {
+      setSaved('That chart shows raw rows, so there is nothing to roll up.')
+      setTimeout(() => setSaved(null), 3000)
+      return
+    }
+    const accepted = await operation.mutateAsync({
+      op: 'aggregate',
+      inputs: [{ dataset_id: id }],
+      from_query: viz.spec.query,
+    })
+    qc.invalidateQueries({ queryKey: keys.datasets })
+    qc.invalidateQueries({ queryKey: ['related'] })
+    setSaved(`saved as a dataset (job ${accepted.job_id.slice(0, 6)})`)
+    setTimeout(() => setSaved(null), 4000)
+  }
 
   const vizSuggestions = useMemo<Suggestion[]>(
     () => (suggestions ?? []).filter((s) => s.action?.op === 'inspect').slice(0, 6),
@@ -90,15 +118,54 @@ export function ExplorePage() {
                   <p className="text-xs text-slate-500">{s.rationale}</p>
                 </div>
                 {q.data && (
-                  <button
-                    type="button"
-                    onClick={() => saveToDashboard(q.data)}
-                    className="shrink-0 rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
-                  >
-                    Save
-                  </button>
+                  <div className="flex shrink-0 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => saveAsDataset(q.data)}
+                      title="Materialise this chart's query as a dataset"
+                      className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
+                    >
+                      Save as dataset
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => saveToDashboard(q.data)}
+                      className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
+                    >
+                      Pin to dashboard
+                    </button>
+                  </div>
                 )}
               </div>
+              {q.data?.spec.chart && (
+                <div className="mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditing(editing === i ? null : i)}
+                    className="text-xs text-slate-400 hover:text-slate-700"
+                  >
+                    {editing === i ? '▾ Hide chart controls' : '▸ Edit chart'}
+                  </button>
+                  {editing === i && (
+                    <div className="mt-1.5">
+                      <ChartEditor
+                        chart={edited[i] ?? q.data.spec.chart}
+                        columns={Object.keys(q.data.data[0] ?? {})}
+                        onChange={(next) => setEdited((e) => ({ ...e, [i]: next }))}
+                        onReset={
+                          edited[i]
+                            ? () =>
+                                setEdited((e) => {
+                                  const { [i]: _drop, ...rest } = e
+                                  return rest
+                                })
+                            : undefined
+                        }
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
               {q.isLoading && <p className="p-6 text-center text-sm text-slate-500">Loading…</p>}
               {q.error && (
                 <p className="rounded bg-rose-50 p-3 text-xs text-rose-800">
@@ -108,13 +175,16 @@ export function ExplorePage() {
               {q.data && (
                 <>
                   <VizRenderer
-                    spec={q.data.spec}
+                    spec={edited[i] ? { ...q.data.spec, chart: edited[i] } : q.data.spec}
                     data={q.data.data}
                     height={q.data.spec.renderer === 'maplibre' ? 420 : 280}
                   />
-                  <QueryDebug
+                  <ChartInspector
+                    data={q.data.data}
                     sql={q.data.sql}
-                    spec={q.data.spec.query}
+                    query={q.data.spec.query}
+                    chart={edited[i] ?? q.data.spec.chart}
+                    rawSpec={q.data.spec.spec}
                     rowCount={q.data.row_count}
                     elapsedMs={q.data.elapsed_ms}
                     truncated={q.data.truncated}

@@ -260,3 +260,22 @@ def test_ordinal_sibling_beats_the_output_type():
     )
     assert resolved.encodings["x"].type == "ordinal"
     assert resolved.encodings["x"].sort == "bucket_ord"
+
+
+def test_raw_vega_lite_must_not_retype_the_mark():
+    """The mark type has exactly one source of truth: ChartSpec.mark.
+
+    The visualizers put styling (colour, point markers) in raw_vega_lite, and
+    that dict is merged last. If it also carried the mark *type*, editing the
+    mark would silently do nothing — which is exactly what happened before the
+    compiler was taught to keep `mark` authoritative.
+    """
+    chart = ChartSpec(
+        mark="area",
+        encodings={"x": Encoding(field="bucket")},
+        raw_vega_lite={"mark": {"type": "line", "point": True, "color": "#4269d0"}},
+    )
+    # The backend keeps the escape hatch verbatim; the frontend compiler is what
+    # enforces this, so assert the shape the compiler relies on.
+    assert chart.mark == "area"
+    assert chart.raw_vega_lite["mark"]["type"] == "line"

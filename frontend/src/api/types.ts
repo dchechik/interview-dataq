@@ -278,6 +278,8 @@ export interface OperationRequest {
   plugin_id?: string
   inputs?: { dataset_id: string; version?: number | null }[]
   params?: Record<string, unknown>
+  /** For op:'aggregate' — materialise this query instead of running a plugin. */
+  from_query?: QuerySpec
   uri?: string
   name?: string
   output_name?: string

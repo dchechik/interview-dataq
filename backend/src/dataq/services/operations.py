@@ -16,8 +16,9 @@ from ..jobs.context import JobCtx
 from ..jobs.executor import run_transform
 from ..plugins.base import REGISTRY
 from ..plugins.builtin.readers import pick_reader
-from ..plugins.kinds import AggregateCtx, Aggregator, Reader, Transform
+from ..plugins.kinds import AggregateCtx, AggregatePlan, Aggregator, Reader, Transform
 from ..query.compiler import quote_ident
+from ..query.spec import QuerySpec
 from ..storage.base import VersionRef
 from .context import AppContext
 from .model import make_model_client
@@ -36,6 +37,10 @@ class OperationRequest(BaseModel):
     plugin_id: str = ""
     inputs: list[DatasetInput] = []
     params: dict[str, Any] = {}
+    # For op="aggregate": materialise this query directly instead of asking a
+    # plugin to build one. This is what turns a chart into a dataset -- the chart
+    # already has a QuerySpec, it just was not persisted anywhere.
+    from_query: QuerySpec | None = None
     # For op="import".
     uri: str = ""
     name: str = ""
@@ -202,15 +207,30 @@ def run_transform_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) ->
 # aggregate
 # --------------------------------------------------------------------------- #
 def run_aggregate_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
-    plugin_cls = REGISTRY.require(req.plugin_id)
-    if not issubclass(plugin_cls, Aggregator):
-        raise TypeError(f"{req.plugin_id} is not an aggregator")
-    plugin: Aggregator = plugin_cls()  # type: ignore[assignment]
-    params = plugin_cls.parse_params(req.params)
-
     inp = req.inputs[0]
     prepared = _prepare(ctx, inp)
-    plan = plugin.plan(AggregateCtx(profile=prepared.profile, params=params))
+
+    if req.from_query is not None:
+        # Materialising a query someone already has -- a chart's, typically. No
+        # plugin is involved, so there is no trusted source for `derive`.
+        if not req.from_query.is_aggregate:
+            raise ValueError(
+                "only an aggregating query can be saved as a dataset; this one "
+                "returns raw rows, so it would just copy the source"
+            )
+        plan = AggregatePlan(spec=req.from_query.model_copy())
+        title = "query"
+        plugin_slug = "agg"
+    else:
+        plugin_cls = REGISTRY.require(req.plugin_id)
+        if not issubclass(plugin_cls, Aggregator):
+            raise TypeError(f"{req.plugin_id} is not an aggregator")
+        plugin: Aggregator = plugin_cls()  # type: ignore[assignment]
+        params = plugin_cls.parse_params(req.params)
+        plan = plugin.plan(AggregateCtx(profile=prepared.profile, params=params))
+        title = plugin.title
+        plugin_slug = plugin.id.split(".")[-1]
+
     plan.spec.dataset = inp.dataset_id
     plan.spec.version = inp.version
 
@@ -223,11 +243,11 @@ def run_aggregate_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) ->
 
     src_name = ctx.catalog.get_dataset(inp.dataset_id)
     base = src_name.name if src_name else "ds"
-    out_name = req.output_name or f"{base}_{plugin.id.split('.')[-1]}"
+    out_name = req.output_name or f"{base}_{plugin_slug}"
 
     dataset = ctx.catalog.create_dataset(
         name=out_name, kind="aggregate",
-        description=f"{plugin.title} over {src_name.name if src_name else inp.dataset_id}",
+        description=f"{title} over {src_name.name if src_name else inp.dataset_id}",
     )
     ref = VersionRef(dataset_id=dataset.id, version=1)
     with ctx.warehouse.cur() as conn:
@@ -253,7 +273,7 @@ def run_aggregate_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) ->
         job_ctx.step_id, status="succeeded", rows_committed=stored.rows,
         outputs=[{"dataset_id": dataset.id, "version": 1}],
     )
-    job_ctx.log(f"{plugin.id}: created aggregate '{out_name}' ({stored.rows:,} rows)")
+    job_ctx.log(f"created aggregate '{out_name}' ({stored.rows:,} rows)")
     return dataset.id
 
 
