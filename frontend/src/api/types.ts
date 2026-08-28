@@ -9,7 +9,7 @@
 export type PluginKind =
   | 'reader' | 'detector' | 'transform' | 'aggregator' | 'suggester' | 'visualizer'
 export type ExecMode = 'pushdown' | 'batch' | 'external' | 'inspect'
-export type Renderer = 'vega-lite' | 'maplibre' | 'table'
+export type Renderer = 'vega-lite' | 'maplibre' | 'table' | 'timeline'
 export type ColumnRole = 'dimension' | 'measure' | 'time' | 'key' | 'geo' | 'ignore'
 export type JobStatus = 'queued' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled'
 
@@ -207,12 +207,45 @@ export interface ChartSpec {
   description?: string
 }
 
+export type AbnormalityOp = '<' | '<=' | '>' | '>=' | '==' | '!='
+
+export interface AbnormalityRule {
+  column: string
+  op: AbnormalityOp
+  value: number
+  label: string
+  /** Why this rule was proposed, so a highlight never looks arbitrary. */
+  rationale?: string
+}
+
+export interface EventAttribute {
+  column: string
+  label?: string | null
+  /** Emphasised attributes read as part of the event; the rest are detail. */
+  highlight: boolean
+  /** Offer "show only this value" — set for columns naming a subject. */
+  filterable: boolean
+}
+
+/** How to render a list of timed events. */
+export interface TimelineSpec {
+  time_column: string
+  title_column?: string | null
+  attributes: EventAttribute[]
+  abnormality?: AbnormalityRule | null
+  descending: boolean
+  group_by_day: boolean
+  description?: string
+}
+
 export interface VizSpec {
   renderer: Renderer
   title: string
   query: QuerySpec
   /** Preferred when present; `spec` is the pre-ChartSpec fallback. */
   chart?: ChartSpec | null
+  /** Presentation for the timeline renderer. */
+  timeline?: TimelineSpec | null
   spec: Record<string, unknown>
   animate?: { field: string; label: string; fps: number } | null
   description: string

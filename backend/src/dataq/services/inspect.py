@@ -9,7 +9,7 @@ from __future__ import annotations
 from ..core.viz import RenderedViz, VizSpec
 from ..plugins.base import REGISTRY
 from ..plugins.kinds import SuggestCtx, Suggester, Suggestion, Visualizer, VizCtx
-from .chart import resolve_chart
+from .chart import resolve_chart, resolve_timeline
 from .context import AppContext
 from .query import rows_as_dicts, run_query
 
@@ -46,6 +46,9 @@ def render_viz(
     # Resolve the chart against the columns the query actually returned, and
     # against the semantic types of the source. A field the query does not
     # return is an error here rather than an unexplained empty chart.
+    if spec.timeline is not None:
+        spec.timeline = resolve_timeline(spec.timeline, result.columns, profile)
+
     if spec.chart is not None:
         spec.chart = resolve_chart(
             spec.chart, result.columns, profile,

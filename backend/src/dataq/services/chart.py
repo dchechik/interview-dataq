@@ -16,6 +16,7 @@ from __future__ import annotations
 from ..core.chart import ChartSpec, Encoding, EncodingType
 from ..core.profile import ColumnProfile, DatasetProfile
 from ..core.semantic import SEMANTIC_TYPES
+from ..core.timeline import TimelineSpec
 
 # A cyclical time part emits a readable label plus this suffix carrying the
 # sortable ordinal -- "Thu" does not sort as text. See query/spec.py TimeBucket.
@@ -209,3 +210,47 @@ def default_chart_for(
             description="Values by frequency",
         )
     return None
+
+
+def resolve_timeline(
+    timeline: TimelineSpec,
+    output_columns: list[str],
+    profile: DatasetProfile | None = None,
+) -> TimelineSpec:
+    """Validate a timeline against the columns its query returns.
+
+    Same contract as ``resolve_chart``: a column the query does not return is an
+    error naming what it does return, rather than an event list that silently
+    renders blank chips. Attributes are dropped with a reason instead of failing
+    the whole view, because losing one chip is recoverable and losing the
+    timeline is not -- but the time column and the abnormality rule are load
+    bearing, so those raise.
+    """
+    present = set(output_columns)
+    if timeline.time_column not in present:
+        raise ChartError(
+            f"timeline is ordered by {timeline.time_column!r}, which the query does "
+            f"not return; available columns: {sorted(present)}"
+        )
+
+    resolved = timeline.model_copy()
+
+    if timeline.title_column and timeline.title_column not in present:
+        resolved.title_column = None
+
+    resolved.attributes = [a for a in timeline.attributes if a.column in present]
+
+    if timeline.abnormality and timeline.abnormality.column not in present:
+        raise ChartError(
+            f"the abnormality rule reads {timeline.abnormality.column!r}, which the "
+            f"query does not return; available columns: {sorted(present)}"
+        )
+
+    # Fill in labels from the profile so a chip reads as a person would name it.
+    if profile is not None:
+        for attribute in resolved.attributes:
+            if attribute.label is None:
+                column = profile.column(attribute.column)
+                if column and column.semantic_type:
+                    attribute.label = attribute.column
+    return resolved

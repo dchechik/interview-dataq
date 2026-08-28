@@ -40,11 +40,18 @@ def test_a_charts_query_can_be_saved_as_a_dataset(app_ctx, run_op, auth):
     agg = run_op(op="aggregate", inputs=[{"dataset_id": auth}],
                  from_query=chart.spec.query.model_dump(), output_name="from_chart")
 
-    # Same numbers as the chart drew.
+    # Same numbers as the chart drew. Compared as a mapping rather than as an
+    # ordered list: ORDER BY n DESC leaves ties in an undefined order, so two
+    # runs of the same query can legitimately disagree about which of two
+    # equally-common countries comes first.
     stored = rows_as_dicts(run_query(app_ctx, QuerySpec(
         dataset=agg, order_by=[Sort(column="n", desc=True)])))
-    assert [r["country"] for r in stored] == [r["country"] for r in chart.data]
-    assert [r["n"] for r in stored] == [r["n"] for r in chart.data]
+    assert {r["country"]: r["n"] for r in stored} == {
+        r["country"]: r["n"] for r in chart.data
+    }
+    # The ordering itself is still monotonic, which is what the chart relies on.
+    counts = [r["n"] for r in stored]
+    assert counts == sorted(counts, reverse=True)
 
 
 def test_the_materialised_chart_joins_the_semantic_graph(app_ctx, run_op, auth):

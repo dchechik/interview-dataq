@@ -11,6 +11,7 @@ import { DatasetPage } from './pages/DatasetPage'
 import { DatasetsPage } from './pages/DatasetsPage'
 import { ExplorePage } from './pages/ExplorePage'
 import { QueryPage } from './pages/QueryPage'
+import { TimelinePage } from './pages/TimelinePage'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, staleTime: 5_000 } },
@@ -27,6 +28,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="datasets/:id" element={<DatasetPage />} />
             <Route path="datasets/:id/query" element={<QueryPage />} />
             <Route path="datasets/:id/explore" element={<ExplorePage />} />
+            <Route path="datasets/:id/timeline" element={<TimelinePage />} />
             <Route path="datasets/:id/ask" element={<AgentPage />} />
             <Route path="ask" element={<AgentPage />} />
             <Route path="dashboards" element={<DashboardsPage />} />

@@ -382,6 +382,14 @@ export function DatasetPage() {
           >
             Explore
           </Link>
+          {profile.columns.some((c) => c.role === 'time') && (
+            <Link
+              to={`/datasets/${id}/timeline`}
+              className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
+            >
+              Timeline
+            </Link>
+          )}
           <Link
             to={`/datasets/${id}/ask`}
             className="rounded bg-slate-900 px-3 py-1.5 text-sm text-white hover:bg-slate-800"

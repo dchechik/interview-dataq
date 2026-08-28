@@ -103,6 +103,32 @@ class VizSuggester(Suggester):
                         "time_column": t.name, "interval": "day", "measure": m.name}),
                 ))
 
+        # A timeline reads individual events rather than their distribution, so
+        # it is proposed whenever there is a time column -- and ranked above the
+        # charts when the dataset carries a rarity column, because then the view
+        # can point straight at the events that stand out.
+        if times:
+            annotated = any(c.name in ("share", "rarity") for c in p.columns)
+            headline = next(
+                (c.name for c in p.columns
+                 if SEMANTIC_TYPES.matches_any(c.semantic_type, ("categorical",))),
+                None,
+            )
+            out.append(Suggestion(
+                title=("Timeline, with unusual events highlighted" if annotated
+                       else f"Timeline of events by {times[0].name}"),
+                rationale=(
+                    "this dataset carries how common each value is, so rare "
+                    "events can be flagged as you read down"
+                    if annotated else
+                    f"{times[0].name} orders the rows, so they can be read as events"
+                ),
+                kind="viz", score=0.93 if annotated else 0.65,
+                action=_inspect("viz.timeline", p.dataset_id, {
+                    "time_column": times[0].name, "title_column": headline,
+                }),
+            ))
+
         for d in dims[:3]:
             out.append(Suggestion(
                 title=f"Top values of {d.name}",

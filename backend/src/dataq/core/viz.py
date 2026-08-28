@@ -13,8 +13,9 @@ from pydantic import BaseModel
 
 from ..query.spec import QuerySpec
 from .chart import ChartSpec
+from .timeline import TimelineSpec
 
-Renderer = Literal["vega-lite", "maplibre", "table"]
+Renderer = Literal["vega-lite", "maplibre", "table", "timeline"]
 
 
 class Animate(BaseModel):
@@ -38,6 +39,9 @@ class VizSpec(BaseModel):
     # The typed grammar, for renderers that draw from data columns. Preferred
     # over ``spec`` when set.
     chart: ChartSpec | None = None
+    # Presentation for the timeline renderer: which column is the headline, what
+    # rides along, and what counts as abnormal.
+    timeline: TimelineSpec | None = None
     # Renderer-specific payload: a MapLibre layer config, or a raw Vega-Lite spec
     # from a panel saved before ``chart`` existed. Dashboards persist the recipe
     # rather than a snapshot, so this stays supported for them.
