@@ -20,6 +20,7 @@ from ..plugins.kinds import AggregateCtx, AggregatePlan, Aggregator, Reader, Tra
 from ..query.compiler import quote_ident
 from ..query.spec import QuerySpec
 from ..storage.base import VersionRef
+from .browse import assert_readable_uri
 from .context import AppContext
 from .model import make_model_client
 from .profiler import compute_stats, profile_columns
@@ -97,6 +98,9 @@ def profile_and_store(
 # import
 # --------------------------------------------------------------------------- #
 def run_import(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
+    # Same containment as the preview route: an import names a path the server
+    # will open, so it has to be one the server was told it may open.
+    assert_readable_uri(req.uri, ctx.settings)
     reader_cls = (
         REGISTRY.require(req.plugin_id) if req.plugin_id else pick_reader(req.uri)
     )

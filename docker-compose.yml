@@ -10,7 +10,12 @@ services:
       # duckdb:  one .duckdb file -- simplest to host, but single-writer
       DATAQ_STORAGE: ${DATAQ_STORAGE:-parquet}
       DATAQ_DATA_DIR: /data
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Both spellings work; the app reads either.
+      DATAQ_ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Mirror the hosted setup: without this the file browser would default to
+      # $HOME and the working directory, i.e. the whole app tree.
+      DATAQ_BROWSE_ROOTS: /data/uploads
+      DATAQ_AUTH_TOKEN: ${DATAQ_AUTH_TOKEN:-}
     restart: unless-stopped
 
 volumes:

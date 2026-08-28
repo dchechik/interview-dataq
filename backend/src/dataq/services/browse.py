@@ -120,6 +120,38 @@ def list_directory(raw: str | None, settings: Settings, show_hidden: bool = Fals
     }
 
 
+# Schemes DuckDB can read directly. A remote URI is not a local path, so the
+# root check does not apply to it -- but it is also an outbound request from the
+# server, so it stays opt-in rather than silently allowed.
+REMOTE_SCHEMES = ("s3://", "gs://", "http://", "https://")
+
+
+def assert_readable_uri(raw: str, settings: Settings) -> str:
+    """Refuse a source URI that points outside the browsable directories.
+
+    ``read_csv``/``read_parquet`` will happily open anything the process can
+    read, so without this an import or a preview is an arbitrary file read. The
+    containment logic is the same one the file browser uses, so the two cannot
+    disagree about what is in bounds.
+    """
+    if raw.startswith(REMOTE_SCHEMES):
+        if not settings.allow_remote_uris:
+            raise BrowseError(
+                f"remote URIs are disabled; set DATAQ_ALLOW_REMOTE_URIS=true to "
+                f"let the server fetch {raw.split('://')[0]}:// sources"
+            )
+        return raw
+
+    # Check the directory the URI resolves into. A glob names a directory plus a
+    # pattern, and an import target need not exist yet, so in both cases the
+    # containing directory is what has to be in bounds.
+    probe = Path(raw.split("*", 1)[0] if "*" in raw else raw).expanduser()
+    if not probe.is_dir():
+        probe = probe.parent
+    resolve_within_roots(str(probe), settings)
+    return raw
+
+
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
 

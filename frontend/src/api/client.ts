@@ -21,6 +21,58 @@ import type {
 /** Same-origin in production; Vite proxies /api to uvicorn in dev. */
 const BASE = '/api'
 
+/**
+ * Shared-token auth for hosted instances.
+ *
+ * A local instance sets no token and none of this engages. A deployed one
+ * returns 401 until a token is supplied; we prompt once, keep it per-browser,
+ * and attach it to every request. Kept in localStorage rather than a cookie
+ * because the token also has to travel as a query parameter for EventSource,
+ * which cannot set headers.
+ */
+const TOKEN_KEY = 'dataq.token'
+
+export function getToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY)
+  } catch {
+    return null // private browsing, or storage disabled
+  }
+}
+
+export function setToken(token: string | null): void {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token)
+    else localStorage.removeItem(TOKEN_KEY)
+  } catch {
+    /* nothing we can do; the header just will not persist */
+  }
+}
+
+/** Append the token to a URL, for EventSource and other header-less clients. */
+export function withToken(url: string): string {
+  const token = getToken()
+  if (!token) return url
+  return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
+}
+
+let promptInFlight = false
+
+/** Ask once for the token, then reload so every query refetches with it. */
+function promptForToken(): void {
+  if (promptInFlight) return
+  promptInFlight = true
+  const entered = window.prompt(
+    'This DataQ instance requires an access token.\n\n' +
+      'It is the DATAQ_AUTH_TOKEN set on the server.',
+  )
+  promptInFlight = false
+  if (entered) {
+    setToken(entered.trim())
+    window.location.reload()
+  }
+}
+
 export class ApiError extends Error {
   // Declared explicitly rather than as a constructor parameter property, which
   // `erasableSyntaxOnly` forbids.
@@ -37,13 +89,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // FormData must set its own Content-Type so the multipart boundary is included;
   // forcing application/json here would make the upload unparseable.
   const isForm = init?.body instanceof FormData
+  const token = getToken()
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers: {
       ...(isForm ? {} : { 'Content-Type': 'application/json' }),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init?.headers ?? {}),
     },
   })
+  if (res.status === 401) {
+    // Either no token yet, or the stored one is stale.
+    setToken(null)
+    promptForToken()
+    throw new ApiError('authentication required', 401)
+  }
   if (!res.ok) {
     // FastAPI puts the useful message in `detail`; surface it rather than a bare code.
     let detail = res.statusText

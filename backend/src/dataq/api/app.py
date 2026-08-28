@@ -37,6 +37,7 @@ from ..services import lineage as lineage_service
 from ..services.context import AppContext, build_context
 from ..services.operations import OperationAccepted, OperationRequest, submit_operation
 from ..services.query import run_query, run_sql
+from .auth import TokenAuthMiddleware, check_settings
 
 CTX: AppContext | None = None
 
@@ -65,6 +66,12 @@ def create_app(ctx: AppContext | None = None) -> FastAPI:
     if ctx is not None:
         CTX = ctx
 
+    settings = ctx.settings if ctx is not None else get_settings()
+    # Refuse to start rather than serve an unprotected API on a public URL.
+    check_settings(settings)
+    if settings.auth_token:
+        app.add_middleware(TokenAuthMiddleware, token=settings.auth_token)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -73,9 +80,7 @@ def create_app(ctx: AppContext | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     _register_routes(app)
-    # Take settings from the injected context when there is one; falling back to
-    # the cached globals here would ignore the caller's configuration.
-    _mount_frontend(app, ctx.settings if ctx is not None else get_settings())
+    _mount_frontend(app, settings)
     return app
 
 
@@ -179,6 +184,12 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - a flat route table
     def preview(req: PreviewRequest) -> dict:
         """Peek at a file before importing it."""
         ctx = context()
+        # Without this the uri goes straight into read_csv(), which is an
+        # arbitrary server-side file read for anyone who can call the endpoint.
+        try:
+            browse_service.assert_readable_uri(req.uri, ctx.settings)
+        except browse_service.BrowseError as exc:
+            raise HTTPException(403, str(exc)) from exc
         reader_cls = REGISTRY.require(req.plugin_id) if req.plugin_id else pick_reader(req.uri)
         if reader_cls is None:
             raise HTTPException(400, f"no reader can handle {req.uri!r}")

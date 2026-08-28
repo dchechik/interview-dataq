@@ -29,10 +29,17 @@ RUN cd backend && uv sync --frozen --no-dev
 # FastAPI serves this directory at / when it exists (see api/app.py).
 COPY --from=frontend /app/dist ./static
 
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
 VOLUME ["/data"]
+# Documentation only: the process binds $PORT, which the platform injects.
 EXPOSE 8000
 
+# Probes the port the server is actually on, not a hardcoded one.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"
+  CMD python -c "import os,urllib.request; urllib.request.urlopen(f\"http://127.0.0.1:{os.environ.get('PORT','8000')}/api/health\")"
 
-CMD ["uvicorn", "dataq.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "backend/src"]
+# The entrypoint restores a pending data bundle before starting uvicorn, and
+# binds $PORT. It must be shell form for the variable to expand.
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

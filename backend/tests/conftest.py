@@ -15,7 +15,15 @@ def storage_mode(request) -> str:
 
 @pytest.fixture
 def settings(tmp_path, storage_mode) -> Settings:
-    return Settings(data_dir=tmp_path / "data", storage=storage_mode, duckdb_threads=2)
+    # browse_roots is explicit because imports are confined to it: a test that
+    # reads a fixture file has to declare where those files live, exactly as a
+    # deployment does.
+    return Settings(
+        data_dir=tmp_path / "data",
+        storage=storage_mode,
+        duckdb_threads=2,
+        browse_roots=str(tmp_path),
+    )
 
 
 @pytest.fixture

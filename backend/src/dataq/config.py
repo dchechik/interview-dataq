@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -41,9 +42,24 @@ class Settings(BaseSettings):
     # Cap on files uploaded through the browser. Server-side files are read in
     # place by DuckDB and are not subject to this.
     max_upload_mb: int = 2_048
+    # Whether an import may name an s3:// or https:// source. Off by default:
+    # it makes the server issue outbound requests on a caller's behalf.
+    allow_remote_uris: bool = False
 
-    # Agent / LLM plugins.
-    anthropic_api_key: str | None = None
+    # Access control. Unset by default so a laptop instance needs no ceremony;
+    # a hosted one sets both, and `require_auth` makes deploying it open an
+    # error rather than an oversight.
+    auth_token: str | None = None
+    require_auth: bool = False
+
+    # Agent / LLM plugins. Accepts the conventional bare ANTHROPIC_API_KEY as
+    # well as the prefixed name -- the SDK reads the bare one, so only honouring
+    # DATAQ_ANTHROPIC_API_KEY meant the agent refused to start on a host where
+    # everything else was configured correctly.
+    anthropic_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("DATAQ_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"),
+    )
     model: str = "claude-opus-5"
 
     # Built frontend bundle. Served at / when present, so production is a single

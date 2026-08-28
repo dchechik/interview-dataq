@@ -10,3 +10,12 @@ sample-data
 .git
 *.duckdb
 *.sqlite*
+
+# Exported conversation transcripts: large, and possibly sensitive. `railway up`
+# uploads the build context, so keep them out of it.
+[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.txt
+.env
+plans/
+docs/
+data-from-railway
+dataq-data*.tgz

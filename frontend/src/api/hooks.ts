@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
-import { api } from './client'
+import { api, withToken } from './client'
 import type { Job, OperationRequest, QuerySpec } from './types'
 import { TERMINAL_STATUSES } from './types'
 
@@ -120,7 +120,8 @@ export function useJobWatcher(jobId: string | null) {
       qc.invalidateQueries({ queryKey: keys.jobs })
     }
 
-    const source = new EventSource(`/api/jobs/${jobId}/stream`)
+    // EventSource cannot set headers, so the token rides in the query string.
+    const source = new EventSource(withToken(`/api/jobs/${jobId}/stream`))
     source.onmessage = (event) => {
       if (cancelled) return
       const payload = JSON.parse(event.data) as Job
