@@ -21,9 +21,14 @@ Three facts explain the whole setup:
 
 ```bash
 brew install railway
-railway login
-railway init          # creates the project, links this directory
+railway login         # opens a browser to authenticate
+railway init          # creates the project, links this directory to it
 ```
+
+The link is stored in your global `~/.railway/config.json`, keyed by directory —
+nothing to commit, and a fresh clone needs linking again. `railway status` shows
+what you are linked to; `railway link` connects to an existing project instead of
+creating one.
 
 ### 1. Deploy the code
 

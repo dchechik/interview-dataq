@@ -182,21 +182,78 @@ backend/src/dataq/
 frontend/src/
   api/         typed client + React Query hooks
   renderers/   registry keyed on VizSpec.renderer
-  components/  SchemaForm (JSON Schema -> form), DatasetTree, FileBrowser, JobProgress
-  pages/       Datasets, Dataset, Query, Explore, Dashboards
+  components/  SchemaForm (JSON Schema -> form), DatasetTree, FileBrowser,
+               ChartEditor, ChartInspector, JobProgress
+  pages/       Datasets, Dataset, Query, Explore, Timeline, Dashboards, Ask
 ```
 
 ## Deployment
 
-One container serves `/api` and the built SPA, with all state under one volume:
+One container serves `/api` and the built SPA, with all state under one volume, so
+locally that is:
 
 ```bash
 make docker && make docker-run     # http://localhost:8000
 ```
 
-Config is entirely environment-driven — see `.env.example`. For a hosted deploy
-(Railway, Fly), mount a volume at `/data`; set `DATAQ_STORAGE=duckdb` if you would
-rather have a single file to back up than a directory of Parquet.
+### Railway
+
+Code and data deploy **separately**. The image holds the code; a Railway volume
+mounted at `/data` holds the datasets and survives every deploy. `docs/DEPLOY.md`
+is the full walkthrough — this is the short version.
+
+**Link an account** (Railway builds remotely, so you do not need Docker locally):
+
+```bash
+brew install railway
+railway login          # opens a browser to authenticate
+railway init           # creates a project and links this directory to it
+```
+
+`railway init` creates a project and links this directory to it, so every later
+command run here targets that project. The link lives in your global
+`~/.railway/config.json` keyed by directory — there is nothing to commit, and a
+fresh clone needs linking again. `railway status` shows what you are linked to;
+`railway link` connects to an existing project instead of creating a new one.
+
+**Deploy the code:**
+
+```bash
+make railway-deploy    # == railway up
+make railway-logs      # tail the running service
+```
+
+The first deploy fails its healthcheck until you finish the setup below — the app
+refuses to start without an auth token, which is deliberate. Then, once, in the
+dashboard:
+
+1. **Add a volume** to the service with mount path `/data`. This is what makes
+   data outlive deploys; `DATAQ_DATA_DIR=/data` is already baked into the image.
+2. **Set variables** — `DATAQ_AUTH_TOKEN` (a long random string),
+   `DATAQ_REQUIRE_AUTH=true`, `DATAQ_BROWSE_ROOTS=/data/uploads`,
+   `DATAQ_STORAGE=parquet`, and `DATAQ_ANTHROPIC_API_KEY` if you want the agent.
+3. **Generate a domain** under Settings → Networking.
+
+Build settings and the `/api/health` healthcheck come from `railway.json`, which
+overrides the dashboard, so there is nothing to click for those.
+
+**Move data separately from code:**
+
+```bash
+make data-size      # what am I about to ship, and does it fit the volume?
+make data-push      # ./data  ->  Railway, merged into what is there
+make data-replace   # ./data  ->  Railway, wiping the volume first
+make data-pull      # Railway ->  ./data-from-railway
+```
+
+`data-push` uploads a tarball to the volume and restarts the service; the
+container entrypoint unpacks it **before** uvicorn starts, because the running
+app holds `catalog.sqlite` open in WAL mode and replacing it underneath a live
+process risks corruption.
+
+A hosted instance needs `DATAQ_AUTH_TOKEN` set. Without it anyone who finds the
+URL can read server-side files and spend your Anthropic budget, which is why
+`DATAQ_REQUIRE_AUTH` makes the app refuse to start rather than come up open.
 
 ## Development
 
@@ -222,13 +279,15 @@ Before any request is sent the UI prices the run — tokens in the first request
 (counted by the API when a key is present, approximated otherwise) and a ceiling
 for the whole loop — and asks. The user is paying, so the decision is theirs.
 
-Set `ANTHROPIC_API_KEY` to enable it. Everything else runs without one.
+Set `ANTHROPIC_API_KEY` (or `DATAQ_ANTHROPIC_API_KEY` — both are read) to enable
+it. Everything else runs without one.
 
 ## Status
 
 Implemented and tested: import, profiling and semantic typing, transforms in all
 three execution modes, the query layer, charts and maps, aggregates, joins, the
-dashboard, and the agent.
+typed chart grammar, the timeline view, the dashboard, the agent, and a
+Railway deployment with data decoupled from code.
 
 The agent's tool surface and loop mechanics are covered by tests using a scripted
 model client (tool dispatch, the `tool_result` round-trip, parallel calls, refusals,
