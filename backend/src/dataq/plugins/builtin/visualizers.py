@@ -10,8 +10,9 @@ from typing import ClassVar
 
 from pydantic import BaseModel, Field
 
+from ...core.chart import ChartSpec, Encoding
 from ...core.viz import Animate, VizSpec
-from ...query.spec import Filter, Interval, QuerySpec, Select, Sort, TimeBucket
+from ...query.spec import Filter, Interval, QuerySpec, Select, Sort, TimeBucket, TimePart
 from ..base import Accepts, Produces, register
 from ..kinds import Visualizer, VizCtx
 
@@ -42,14 +43,16 @@ class Histogram(Visualizer):
             title=f"Distribution of {p.column}",
             # Vega-Lite bins client-side; we just need the raw values, capped.
             query=QuerySpec(dataset="", select=[Select(column=p.column)], limit=50_000),
-            spec={
-                "mark": {"type": "bar", "color": PALETTE[0]},
-                "encoding": {
-                    "x": {"field": p.column, "bin": {"maxbins": p.bins},
-                          "type": "quantitative", "title": p.column},
-                    "y": {"aggregate": "count", "type": "quantitative", "title": "rows"},
+            # Binning and counting are client-side, which is why they are
+            # encodings rather than part of the query.
+            chart=ChartSpec(
+                mark="bar",
+                encodings={
+                    "x": Encoding(field=p.column, type="quantitative", bin=p.bins),
+                    "y": Encoding(field=p.column, aggregate="count", title="rows"),
                 },
-            },
+                raw_vega_lite={"mark": {"type": "bar", "color": PALETTE[0]}},
+            ),
         )
 
 
@@ -82,20 +85,28 @@ class BarChart(Visualizer):
                 dataset="", group_by=[p.dimension], select=select,
                 order_by=[Sort(column=value_field, desc=True)], limit=p.k,
             ),
-            spec={
-                "mark": {"type": "bar", "color": PALETTE[0]},
-                "encoding": {
-                    "y": {"field": p.dimension, "type": "nominal", "sort": "-x",
-                          "title": p.dimension},
-                    "x": {"field": value_field, "type": "quantitative", "title": value_field},
+            chart=ChartSpec(
+                mark="bar",
+                encodings={
+                    # Horizontal: long category labels read better on the y axis.
+                    "y": Encoding(field=p.dimension, sort="-x"),
+                    "x": Encoding(field=value_field),
                 },
-            },
+                raw_vega_lite={"mark": {"type": "bar", "color": PALETTE[0]}},
+            ),
         )
 
 
 class TimeSeriesParams(BaseModel):
     time_column: str
     interval: Interval = "day"
+    part: TimePart | None = Field(
+        default=None,
+        description=(
+            "Optional: chart a repeating slice of time instead of the timeline — "
+            "e.g. hour_of_day puts every 1pm in one bar, whatever the date"
+        ),
+    )
     measure: str | None = None
     series: str | None = Field(default=None, description="Optional column to split series by")
 
@@ -116,24 +127,38 @@ class TimeSeries(Visualizer):
         if p.measure:
             select.append(Select(column=p.measure, agg="avg", alias=f"avg_{p.measure}"))
             value_field = f"avg_{p.measure}"
-        encoding = {
-            "x": {"field": "bucket", "type": "temporal", "title": p.interval},
-            "y": {"field": value_field, "type": "quantitative", "title": value_field},
+
+        bucket = TimeBucket(column=p.time_column, interval=p.interval, part=p.part)
+        encodings = {
+            # The resolver types the x axis: temporal for a truncated timeline,
+            # ordinal sorted by bucket_ord for a cyclical part.
+            "x": Encoding(field=bucket.alias),
+            "y": Encoding(field=value_field),
         }
         if p.series:
-            encoding["color"] = {"field": p.series, "type": "nominal",
-                                 "scale": {"range": PALETTE}}
+            encodings["color"] = Encoding(field=p.series)
+
+        # A cyclical part has no continuous axis to draw a line along, so bars.
+        mark = "bar" if p.part else "line"
+        raw = {"mark": {"type": "bar", "color": PALETTE[0]}} if p.part else {
+            "mark": {"type": "line", "point": True, "color": PALETTE[0]}
+        }
+        if p.series:
+            raw["encoding"] = {"color": {"scale": {"range": PALETTE}}}
+
+        label = p.part.replace("_", " ") if p.part else p.interval
         return VizSpec(
             renderer="vega-lite",
-            title=f"{value_field} by {p.interval}",
+            title=f"{value_field} by {label}",
             query=QuerySpec(
                 dataset="",
-                time_bucket=TimeBucket(column=p.time_column, interval=p.interval),
+                time_bucket=bucket,
                 group_by=[p.series] if p.series else [],
-                select=select, order_by=[Sort(column="bucket")], limit=10_000,
+                select=select,
+                order_by=[Sort(column=bucket.ordinal_alias if p.part else bucket.alias)],
+                limit=10_000,
             ),
-            spec={"mark": {"type": "line", "point": True, "color": PALETTE[0]},
-                  "encoding": encoding},
+            chart=ChartSpec(mark=mark, encodings=encodings, raw_vega_lite=raw),
         )
 
 

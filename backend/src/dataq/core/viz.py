@@ -12,6 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from ..query.spec import QuerySpec
+from .chart import ChartSpec
 
 Renderer = Literal["vega-lite", "maplibre", "table"]
 
@@ -34,7 +35,12 @@ class VizSpec(BaseModel):
     # The data the renderer needs. Executed by the backend; rows are inlined into
     # the response so the frontend makes exactly one request per chart.
     query: QuerySpec
-    # Renderer-specific payload: a Vega-Lite spec, a MapLibre layer config, etc.
+    # The typed grammar, for renderers that draw from data columns. Preferred
+    # over ``spec`` when set.
+    chart: ChartSpec | None = None
+    # Renderer-specific payload: a MapLibre layer config, or a raw Vega-Lite spec
+    # from a panel saved before ``chart`` existed. Dashboards persist the recipe
+    # rather than a snapshot, so this stays supported for them.
     spec: dict[str, Any] = {}
     animate: Animate | None = None
     description: str = ""

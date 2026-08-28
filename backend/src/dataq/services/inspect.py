@@ -9,6 +9,7 @@ from __future__ import annotations
 from ..core.viz import RenderedViz, VizSpec
 from ..plugins.base import REGISTRY
 from ..plugins.kinds import SuggestCtx, Suggester, Suggestion, Visualizer, VizCtx
+from .chart import resolve_chart
 from .context import AppContext
 from .query import rows_as_dicts, run_query
 
@@ -41,6 +42,16 @@ def render_viz(
         spec.query.limit = limit
 
     result = run_query(ctx, spec.query)
+
+    # Resolve the chart against the columns the query actually returned, and
+    # against the semantic types of the source. A field the query does not
+    # return is an error here rather than an unexplained empty chart.
+    if spec.chart is not None:
+        spec.chart = resolve_chart(
+            spec.chart, result.columns, profile,
+            output_types=dict(zip(result.columns, result.types, strict=False)),
+        )
+
     return RenderedViz(
         spec=spec, data=rows_as_dicts(result), row_count=result.row_count,
         sql=result.sql, elapsed_ms=result.elapsed_ms, truncated=result.truncated,

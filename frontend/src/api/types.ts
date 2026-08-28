@@ -179,10 +179,40 @@ export interface QueryResult {
   elapsed_ms: number
 }
 
+export type Mark =
+  | 'bar' | 'line' | 'area' | 'point' | 'tick' | 'rect' | 'arc' | 'boxplot'
+export type Channel =
+  | 'x' | 'y' | 'color' | 'size' | 'shape' | 'opacity' | 'theta'
+  | 'detail' | 'row' | 'column' | 'tooltip'
+export type EncodingType = 'quantitative' | 'nominal' | 'ordinal' | 'temporal'
+
+export interface Encoding {
+  field: string
+  type?: EncodingType | null
+  aggregate?: string | null
+  bin?: boolean | number | null
+  sort?: string | null
+  title?: string | null
+  stack?: boolean | null
+  /** Why the backend chose this type — shown in the inspector. */
+  inferred_from?: string | null
+}
+
+/** The typed grammar. Resolved server-side, compiled to Vega-Lite client-side. */
+export interface ChartSpec {
+  mark: Mark
+  encodings: Partial<Record<Channel, Encoding>>
+  layers?: ChartSpec[]
+  raw_vega_lite?: Record<string, unknown>
+  description?: string
+}
+
 export interface VizSpec {
   renderer: Renderer
   title: string
   query: QuerySpec
+  /** Preferred when present; `spec` is the pre-ChartSpec fallback. */
+  chart?: ChartSpec | null
   spec: Record<string, unknown>
   animate?: { field: string; label: string; fps: number } | null
   description: string
