@@ -486,3 +486,130 @@ def test_top_k_is_allowed_to_return_exactly_k(app_ctx, run_op, events):
                    inputs=[{"dataset_id": events}],
                    params={"dimension": "user", "k": 2}, output_name="top_users")
     assert app_ctx.catalog.get_profile(table).row_count == 2
+
+
+# --------------------------------------------------------------------------- #
+# text columns that mean a timestamp but are not one
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def text_dates(app_ctx, run_op, tmp_path):
+    """The shape of a real logon export: MM/DD/YYYY HH:MM:SS as text."""
+    path = tmp_path / "logon.csv"
+    with path.open("w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["user", "date", "activity"])
+        for i in range(60):
+            w.writerow([f"u{i % 5}", f"{i % 12 + 1:02d}/{i % 27 + 1:02d}/2011 08:07:29",
+                        ["Logon", "Logoff"][i % 2]])
+    return run_op(op="import", uri=str(path), name="logon")
+
+
+def test_a_text_date_column_is_not_a_time_axis(app_ctx, text_dates):
+    """Meaning and storage are different questions.
+
+    The column means a timestamp -- detection says so, correctly -- but date
+    arithmetic on a VARCHAR is a type error, so nothing may treat it as a time
+    axis until it is parsed.
+    """
+    column = app_ctx.catalog.get_profile(text_dates).column("date")
+    assert column.semantic_type == "time.timestamp", "it does mean a timestamp"
+    assert column.physical_type == "VARCHAR"
+    assert column.role != "time", "but it cannot be used as one yet"
+
+
+def test_features_on_a_text_date_explain_rather_than_fail_in_duckdb(
+        app_ctx, text_dates):
+    """This used to surface as 'No function matches -(VARCHAR, INTERVAL)' with a
+    forty-line list of candidate operators, naming neither the column nor the fix."""
+    job = run_failing(app_ctx, op="transform", plugin_id="enrich.features",
+                      inputs=[{"dataset_id": text_dates}],
+                      params={"features": ["count() by user over 30d"]})
+    assert job.status == "failed"
+    assert "normalize.timestamp" in job.error
+    assert "VARCHAR, INTERVAL" not in job.error
+
+
+def test_naming_the_text_column_explicitly_is_also_caught(app_ctx, text_dates):
+    job = run_failing(app_ctx, op="transform", plugin_id="enrich.features",
+                      inputs=[{"dataset_id": text_dates}],
+                      params={"time_column": "date",
+                              "features": ["count() by user over 30d"]})
+    assert job.status == "failed"
+    assert "not a date or timestamp" in job.error
+    assert "MM/DD/YYYY" in job.error, "it says how the column does read"
+
+
+def test_a_time_rollup_on_a_text_date_is_caught_too(app_ctx, text_dates):
+    """The same column crashed agg.time_rollup a second earlier, in strftime."""
+    job = run_failing(app_ctx, op="aggregate", plugin_id="agg.time_rollup",
+                      inputs=[{"dataset_id": text_dates}],
+                      params={"time_column": "date", "interval": "day"})
+    assert job.status == "failed"
+    assert "normalize.timestamp" in job.error
+
+
+def test_parsing_it_is_the_top_suggestion(app_ctx, text_dates):
+    """Nothing time-based works until this runs, so it outranks everything."""
+    from dataq.services.inspect import suggest
+
+    top = suggest(app_ctx, text_dates)[0]
+    assert top.action["plugin_id"] == "normalize.timestamp"
+    assert top.action["params"]["column"] == "date"
+    assert top.action["params"]["format"] == "%m/%d/%Y %H:%M:%S"
+
+
+def test_after_parsing_features_work(app_ctx, run_op, text_dates):
+    from dataq.services.inspect import suggest
+
+    action = suggest(app_ctx, text_dates)[0].action
+    run_op(op="transform", plugin_id=action["plugin_id"],
+           inputs=[{"dataset_id": text_dates}], params=action["params"])
+
+    profile = app_ctx.catalog.get_profile(text_dates)
+    assert profile.column("date_ts").role == "time"
+
+    run_op(op="transform", plugin_id="enrich.features",
+           inputs=[{"dataset_id": text_dates}],
+           params={"features": ["count() by user, activity over 30d",
+                                "days_since_last() by user"]})
+    after = app_ctx.catalog.get_profile(text_dates)
+    assert after.column("n_by_user_activity_30d") is not None
+    assert after.column("days_since_last_by_user") is not None
+
+
+def test_a_column_marked_time_by_hand_is_still_checked(app_ctx, text_dates):
+    """Two ways a text column ends up carrying role=time: a dataset imported
+    before roles considered storage, and a user pinning it themselves. Either
+    way, trusting the role reproduces the original crash."""
+    version = app_ctx.catalog.get_version(text_dates)
+    app_ctx.catalog.pin_column_type(version.id, "date", "time.timestamp",
+                                    role="time")
+    assert app_ctx.catalog.get_profile(text_dates).column("date").role == "time"
+
+    job = run_failing(app_ctx, op="transform", plugin_id="enrich.features",
+                      inputs=[{"dataset_id": text_dates}],
+                      params={"features": ["count() by user over 30d"]})
+    assert job.status == "failed"
+    assert "normalize.timestamp" in job.error
+
+
+def test_no_time_based_suggestion_offers_a_text_column(app_ctx, text_dates):
+    """A suggestion that cannot run is worse than no suggestion.
+
+    The role is recorded at profiling time and can be stale, so the physical
+    type is checked when the question is asked rather than only when it was
+    answered.
+    """
+    from dataq.services.inspect import suggest
+
+    version = app_ctx.catalog.get_version(text_dates)
+    app_ctx.catalog.pin_column_type(version.id, "date", "time.timestamp",
+                                    role="time")
+
+    offered = suggest(app_ctx, text_dates)
+    time_based = [s for s in offered
+                  if s.action.get("plugin_id") in
+                  ("viz.timeseries", "viz.timeline", "agg.time_rollup",
+                   "agg.features", "enrich.features")]
+    assert not time_based, f"offered {[s.title for s in time_based]}"
+    assert offered[0].action["plugin_id"] == "normalize.timestamp"

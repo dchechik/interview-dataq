@@ -100,6 +100,17 @@ which. Three things follow from that:
 - Numeric columns named like times are checked against the epoch ranges, so
   `event_time` as a BIGINT is recognised rather than averaged.
 
+**Meaning is not storage.** A `VARCHAR` holding `03/07/2011 08:07:29` *means* a
+timestamp, and detection says so. It still cannot be a time axis: subtracting an
+interval from text is a type error. So a column's **role** reflects what it can
+do as stored — a text date is a dimension until it is parsed — while its
+semantic type records what it means, which is what makes the fix suggestable.
+Parsing it is then the top suggestion, carrying the format already detected.
+
+Without that split, every time-based plugin picked the column up and failed
+inside DuckDB with `No function matches -(VARCHAR, INTERVAL)` and forty lines of
+candidate operators, naming neither the column nor the remedy.
+
 ### Parsing that fails says so
 
 Every parsing expression DuckDB offers — `try_cast`, `try_strptime` — reports

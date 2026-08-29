@@ -29,6 +29,8 @@ from typing import ClassVar
 from pydantic import BaseModel, Field
 
 from ...core import features as F
+from ...core.profile import is_temporal
+from ...core.semantic import SEMANTIC_TYPES
 from ...query.spec import QuerySpec, Select, Sort, TimeBucket
 from ..base import Accepts, Produces, register
 from ..kinds import (
@@ -42,9 +44,41 @@ from ..kinds import (
 )
 
 
-def _time_column(profile) -> str | None:
-    times = profile.by_role("time")
-    return times[0].name if times else None
+def _time_column(profile, named: str | None = None) -> str | None:
+    """The column to order events by, checked for being usable as one.
+
+    A named column is verified rather than trusted: a text column that *means* a
+    timestamp fails as `VARCHAR - INTERVAL` deep inside DuckDB, and that error
+    names a type mismatch rather than the column or the fix.
+    """
+    if named:
+        column = profile.column(named)
+        if column is None:
+            raise ValueError(f"no column named {named!r}")
+    else:
+        times = profile.time_columns()
+        if not times:
+            return None
+        # Checked even though the role says it is a time column: a dataset
+        # profiled before roles took storage into account still carries
+        # role="time" on a text column, and trusting it reproduces the original
+        # binder error on exactly the datasets that already exist.
+        column = times[0]
+    if not is_temporal(column.physical_type):
+        raise ValueError(_not_temporal(column))
+    return column.name
+
+
+def _not_temporal(column) -> str:
+    """Why a column cannot be a time axis, and what to do about it."""
+    detail = (f"{column.name} is {column.physical_type}, not a date or timestamp, "
+              "so it cannot be used as a time axis.")
+    if SEMANTIC_TYPES.matches_any(column.semantic_type, ("temporal",)):
+        formats = next((g.formats for g in column.candidates if g.formats), [])
+        how = f" (it reads as {formats[0].label})" if formats else ""
+        detail += (f" It does hold dates{how} -- parse it first with "
+                   "normalize.timestamp, which will add a real timestamp column.")
+    return detail
 
 
 # --------------------------------------------------------------------------- #
@@ -108,7 +142,7 @@ class FeatureTableAggregate(Aggregator):
             if name not in known:
                 raise ValueError(f"no column named {name!r}")
 
-        time_column = p.time_column or _time_column(ctx.profile)
+        time_column = _time_column(ctx.profile, p.time_column)
         if (p.grain or p.windows) and not time_column:
             raise ValueError(
                 "a grain or a rolling window needs a time column, and this "
@@ -220,7 +254,7 @@ class EnrichFeatures(Transform):
     def sql(self, ctx: TransformCtx) -> SqlPlan:
         p: EnrichParams = ctx.params
         known = {c.name for c in ctx.profile.columns}
-        time_column = p.time_column or _time_column(ctx.profile)
+        time_column = _time_column(ctx.profile, p.time_column)
 
         join = self._join(ctx, p, known) if p.from_dataset else None
         if join:
@@ -260,7 +294,7 @@ class EnrichFeatures(Transform):
         # A bucketed feature table is keyed by time as well, and the events side
         # has to be truncated to the same grain to match it.
         if "bucket" in right.columns:
-            time_column = p.time_column or _time_column(ctx.profile)
+            time_column = _time_column(ctx.profile, p.time_column)
             if not time_column:
                 raise ValueError(
                     f"{p.from_dataset} is bucketed by time, but this dataset has "

@@ -12,7 +12,12 @@ from typing import ClassVar
 
 from pydantic import BaseModel
 
-from ...core.profile import ColumnProfile, DatasetProfile, entity_columns
+from ...core.profile import (
+    ColumnProfile,
+    DatasetProfile,
+    entity_columns,
+    is_temporal,
+)
 from ...core.semantic import SEMANTIC_TYPES
 from ..base import NoParams, Produces, register
 from ..kinds import SuggestCtx, Suggester, Suggestion
@@ -62,7 +67,7 @@ class VizSuggester(Suggester):
     def suggest(self, ctx: SuggestCtx) -> list[Suggestion]:
         p = ctx.profile
         out: list[Suggestion] = []
-        times = p.by_role("time")
+        times = p.time_columns()
         measures = _interesting_measures(p)
         dims = [c for c in p.columns if c.role == "dimension"
                 and SEMANTIC_TYPES.matches_any(c.semantic_type, ("categorical",))]
@@ -188,7 +193,7 @@ class AggregateSuggester(Suggester):
                                   {"column": c.name}),
             ))
 
-        times = p.by_role("time")
+        times = p.time_columns()
         measures = _interesting_measures(p)
         if times:
             out.append(Suggestion(
@@ -238,6 +243,51 @@ class AggregateSuggester(Suggester):
 
 
 @register
+class NormalizeSuggester(Suggester):
+    """Propose the parses that unlock everything else.
+
+    A text column that means a timestamp cannot be bucketed, charted over time,
+    laid out on a timeline, or windowed -- and until it is parsed, none of those
+    are even suggested, because they would fail. So this is ranked above them
+    all: it is the step that makes the rest of the dataset usable.
+    """
+
+    id: ClassVar[str] = "suggest.normalize"
+    title: ClassVar[str] = "Suggested clean-up"
+    Params: ClassVar[type[BaseModel]] = NoParams
+
+    def suggest(self, ctx: SuggestCtx) -> list[Suggestion]:
+        out: list[Suggestion] = []
+        for c in ctx.profile.columns:
+            temporal = SEMANTIC_TYPES.matches_any(c.semantic_type, ("temporal",))
+            if not temporal or is_temporal(c.physical_type):
+                continue
+            formats = next((g.formats for g in c.candidates if g.formats), [])
+            best = formats[0] if formats else None
+            if best and best.conflict:
+                # Ambiguous: the transform will refuse to guess, so say which
+                # readings are on offer rather than sending them into that error.
+                rationale = (f"{c.name} holds dates, but ambiguously -- "
+                             f"{best.conflict}. Pick a format when parsing.")
+                params = {"column": c.name}
+            elif best:
+                rationale = (f"{c.name} holds dates stored as text ({best.label}), "
+                             "so it cannot be charted over time or windowed until "
+                             "it is parsed")
+                params = {"column": c.name, "format": best.format}
+            else:
+                continue
+            out.append(Suggestion(
+                title=f"Parse {c.name} into a real timestamp",
+                rationale=rationale,
+                kind="transform", score=0.97,
+                action=_operation("transform", "normalize.timestamp",
+                                  ctx.profile.dataset_id, params),
+            ))
+        return out
+
+
+@register
 class FeatureSuggester(Suggester):
     """Propose behavioural features for event-shaped datasets.
 
@@ -255,7 +305,7 @@ class FeatureSuggester(Suggester):
 
     def suggest(self, ctx: SuggestCtx) -> list[Suggestion]:
         p = ctx.profile
-        times = p.by_role("time")
+        times = p.time_columns()
         if not times:
             return []
         entities = entity_columns(p)

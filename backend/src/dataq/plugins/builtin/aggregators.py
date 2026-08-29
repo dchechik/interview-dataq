@@ -12,6 +12,7 @@ from typing import ClassVar
 
 from pydantic import BaseModel, Field
 
+from ...core.profile import is_temporal
 from ...query.spec import Interval, QuerySpec, Select, Sort, TimeBucket, TimePart
 from ..base import Accepts, Produces, register
 from ..kinds import AggregateCtx, AggregatePlan, Aggregator
@@ -94,6 +95,17 @@ class TimeRollupAggregate(Aggregator):
 
     def plan(self, ctx: AggregateCtx) -> AggregatePlan:
         p: TimeRollupParams = ctx.params
+        column = ctx.profile.column(p.time_column)
+        if column is None:
+            raise ValueError(f"no column named {p.time_column!r}")
+        if not is_temporal(column.physical_type):
+            # date_trunc and strftime both reject VARCHAR, and the binder error
+            # they raise names neither the column nor the remedy.
+            raise ValueError(
+                f"{p.time_column} is {column.physical_type}, not a date or "
+                "timestamp. If it holds dates as text, parse it first with "
+                "normalize.timestamp."
+            )
         select = [Select(column="*", agg="count", alias="n")]
         if p.measure:
             select.append(Select(column=p.measure, agg="sum", alias=f"sum_{p.measure}"))

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..core.datefmt import ambiguous, infer_formats
-from ..core.profile import ColumnProfile, ColumnStats, SemanticGuess
+from ..core.profile import ColumnProfile, ColumnStats, SemanticGuess, is_temporal
 from ..core.semantic import SEMANTIC_TYPES
 from ..plugins.base import REGISTRY
 from ..plugins.kinds import Detector
@@ -141,7 +141,15 @@ def profile_columns(
             prof.semantic_type = best.semantic_type
             prof.confidence = best.confidence
             st_def = SEMANTIC_TYPES.get(best.semantic_type)
-            prof.role = st_def.role if st_def else "dimension"
+            role = st_def.role if st_def else "dimension"
+            # A column's *meaning* can be temporal while its storage is not.
+            # Role answers "what can I do with this", so a text date is a
+            # dimension until it is parsed -- otherwise every time-based plugin
+            # picks it up and fails on VARCHAR - INTERVAL deep inside DuckDB.
+            # The semantic type is kept, which is what makes the fix suggestable.
+            if role == "time" and not is_temporal(st.physical_type):
+                role = "dimension"
+            prof.role = role
         else:
             prof.role = _fallback_role(st)
         out.append(prof)

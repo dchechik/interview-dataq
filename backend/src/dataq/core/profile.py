@@ -80,6 +80,32 @@ class DatasetProfile(BaseModel):
     def by_role(self, *roles: ColumnRole) -> list[ColumnProfile]:
         return [c for c in self.columns if c.role in roles]
 
+    def time_columns(self) -> list[ColumnProfile]:
+        """Columns usable as a time axis, which is not quite role == "time".
+
+        The role is recorded at profiling time and can be stale -- a dataset
+        imported before roles took storage into account, or a column a user
+        pinned by hand -- so the physical type is checked as well. Every caller
+        of by_role("time") wanted this; asking for the role alone is how a text
+        column reached DuckDB as `VARCHAR - INTERVAL`.
+        """
+        return [c for c in self.by_role("time") if is_temporal(c.physical_type)]
+
+
+TEMPORAL_PHYSICAL = ("TIMESTAMP", "DATE", "TIME")
+
+
+def is_temporal(physical_type: str) -> bool:
+    """Whether a column can be used as a time axis *as stored*.
+
+    Meaning and storage are different questions, and this is the one that
+    decides whether date arithmetic will work. A VARCHAR of '03/07/2011
+    08:07:29' means a timestamp -- detection says so, correctly -- but
+    subtracting an interval from it is a type error, so nothing may treat it as
+    a time axis until it has been parsed.
+    """
+    return physical_type.upper().startswith(TEMPORAL_PHYSICAL)
+
 
 # Columns that identify a subject you would want several events for -- a user,
 # an address, a vehicle. Shared rather than private to the timeline because
