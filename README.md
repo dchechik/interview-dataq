@@ -117,6 +117,56 @@ The check is for wrong formats, not imperfect data: the default threshold tolera
 the handful of `n/a` rows every real column has, and an all-null input is not
 blamed on the transform that could not parse it.
 
+### Behavioural features
+
+Given `(user, timestamp, activity_type, location)`, every row can carry how often
+this user did this recently, how common it is across everyone, and how long since
+they last did it. Written as expressions, one per line:
+
+```
+share()            by activity_type
+count()            by user, activity_type over 30d
+count()            by user, activity_type in day
+days_since_last()  by user, activity_type
+avg(amount)        by user over 7d as spend_7d
+```
+
+Each parses to a typed `Feature` — which is what the API and the agent exchange,
+the shorthand being for people — and compiles to one SQL window expression. There
+is a `raw` escape hatch for the rest, the same structure-plus-a-way-out pairing
+as `ChartSpec` and its `raw_vega_lite`.
+
+**Two steps, because the intermediate is worth having.** `agg.features` builds a
+feature table — one row per `(user, activity_type[, day])` with counts, shares,
+rolling totals and first/last seen — which is a dataset you can chart and query
+on its own. `enrich.features` then attaches it back, on as many key columns as it
+takes, and computes the features no grouped table can hold. The split is not
+merely organisational: whole-partition and calendar-bucket statistics are exactly
+what a `GROUP BY` computes, while "the 30 days before *this* event" and "days
+since the previous one" have a different answer on every row.
+
+Two things the design turns on:
+
+- **Cost tracks the number of distinct sorts, not the number of features.**
+  Features sharing a window emit identical `OVER` text and DuckDB reuses one
+  sort. On 5M rows, five features over one window cost 0.7s where six across
+  three windows cost 6.3s.
+- **A feature that sees the future says so.** A trailing window only looks back,
+  but a whole-dataset `share()` counts events that come after the row it
+  describes, and a calendar bucket includes the rest of today. That is often
+  the question you want — it is recorded on the column rather than left to be
+  rediscovered.
+
+Rolling totals in the feature table are read off buckets, so they stop one bucket
+short: `n_30d` means the 30 days *before* today, never the current day, whose
+later events would otherwise leak backwards.
+
+Feature stores were the reference for the interface — Tecton's
+`Aggregation(column, function, time_window)` is nearly the same object, its tiling
+is the feature table, and Chalk's `Windowed` is the `over 1d,7d,30d` fan-out. The
+serving half of those systems is deliberately absent: features here are columns
+on a dataset, not a serving surface.
+
 ### Importing without typing a path
 
 DuckDB reads data files **in place**, so the import box needs a path the *server*

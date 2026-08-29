@@ -187,8 +187,9 @@ class QueryCompiler:
                 order_parts.append(f"{quote_ident(s.column)}{' DESC' if s.desc else ''}")
             sql += " ORDER BY " + ", ".join(order_parts)
 
-        sql += " LIMIT ?"
-        params.append(spec.limit)
+        if spec.limit is not None:
+            sql += " LIMIT ?"
+            params.append(spec.limit)
         if spec.offset:
             sql += " OFFSET ?"
             params.append(spec.offset)

@@ -16,6 +16,7 @@ from typing import ClassVar
 
 from pydantic import BaseModel, Field
 
+from ...core.profile import is_entity
 from ...core.semantic import SEMANTIC_TYPES
 from ...core.timeline import AbnormalityRule, EventAttribute, TimelineSpec
 from ...core.viz import VizSpec
@@ -23,19 +24,26 @@ from ...query.spec import Filter, QuerySpec, Sort
 from ..base import Accepts, Produces, register
 from ..kinds import Visualizer, VizCtx
 
-# Columns a frequency aggregate contributes when joined back onto its source.
-# `share` is the fraction of rows holding this value, so *small* is rare.
+# Columns saying how common a value is. Found by semantic type, so a computed
+# feature qualifies and not merely the two names the frequency aggregate emits;
+# the names remain as a fallback for datasets profiled before the type existed.
+RARITY_TYPES = ("numeric.share", "numeric.rarity")
 RARITY_COLUMNS = ("share", "rarity")
 
-# Columns that identify a subject worth pivoting to. Clicking one of these in
-# the UI should mean "show me only this user / IP / vehicle".
-SUBJECT_TYPES = ("net.ip", "identity.email", "identity.key", "geo.country_iso2")
 
-# A subject is something you have *several* events for. A column with roughly as
-# many distinct values as rows is a per-row identifier, not a subject: filtering
-# by it yields a timeline of one event, which is not a timeline. This is the
-# difference between src_ip and event_id, both of which are identity types.
-SUBJECT_MAX_DISTINCT_FRAC = 0.9
+def _rarity_columns(profile) -> list:
+    """Columns that say how unusual a row is, most specific first."""
+    typed = [c for c in profile.columns
+             if SEMANTIC_TYPES.matches_any(c.semantic_type, RARITY_TYPES)]
+    if typed:
+        return typed
+    return [c for c in (profile.column(n) for n in RARITY_COLUMNS) if c is not None]
+
+# Columns that identify a subject worth pivoting to. Clicking one of these in
+# the UI should mean "show me only this user / IP / vehicle". Narrower than the
+# shared ENTITY_TYPES: a plain category makes a fine thing to group behaviour
+# by, but a poor thing to read a timeline of.
+SUBJECT_TYPES = ("net.ip", "identity.email", "identity.key", "geo.country_iso2")
 
 # A timeline is for reading, not for scrolling forever.
 DEFAULT_LIMIT = 200
@@ -43,12 +51,7 @@ DEFAULT_LIMIT = 200
 
 def _is_subject(column) -> bool:
     """Is this a thing you would want to see the timeline *of*?"""
-    if not SEMANTIC_TYPES.matches_any(column.semantic_type, SUBJECT_TYPES):
-        return False
-    stats = column.stats
-    if stats is None:
-        return True  # unprofiled: assume it is usable rather than hide it
-    return stats.distinct_frac < SUBJECT_MAX_DISTINCT_FRAC
+    return is_entity(column, SUBJECT_TYPES)
 
 
 class TimelineParams(BaseModel):
@@ -101,7 +104,8 @@ class Timeline(Visualizer):
         dimensions. Rarity columns are excluded -- they drive the highlight, and
         repeating them as a chip would be noise.
         """
-        skip = {p.time_column, p.title_column, *RARITY_COLUMNS}
+        skip = {p.time_column, p.title_column,
+                *(c.name for c in _rarity_columns(ctx.profile))}
         chosen: list[EventAttribute] = []
 
         for column in ctx.profile.columns:
@@ -133,17 +137,17 @@ class Timeline(Visualizer):
                 value=p.abnormality_value if p.abnormality_value is not None else 0.01,
                 label=p.abnormality_label,
             )
-        for name in RARITY_COLUMNS:
-            if ctx.profile.column(name) is None:
-                continue
-            if name == "share":
+        for column in _rarity_columns(ctx.profile):
+            # Share counts down and rarity counts up, so the comparison flips.
+            if SEMANTIC_TYPES.is_a(column.semantic_type or "", "numeric.rarity") \
+                    or column.name == "rarity":
                 return AbnormalityRule(
-                    column="share", op="<", value=0.01, label="rare",
+                    column=column.name, op=">", value=0.99, label="rare",
                     rationale="fewer than 1% of rows share this value",
                 )
             return AbnormalityRule(
-                column="rarity", op=">", value=0.99, label="rare",
-                rationale="fewer than 1% of rows share this value",
+                column=column.name, op="<", value=0.01, label="rare",
+                rationale=f"fewer than 1% of rows share this {column.name}",
             )
         return None
 

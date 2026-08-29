@@ -129,3 +129,14 @@ _r("identity.key", "Identifier", parent="text", role="key", joinable=True,
 
 # --- money -------------------------------------------------------------------
 _r("money.amount", "Monetary amount", parent="numeric", role="measure")
+
+# How common something is. Worth its own type because several things downstream
+# want to find such a column without knowing which plugin produced it: the
+# timeline highlights rows whose value is unusually low, and chart suggestion
+# ranks a dataset carrying one differently. Matching on the *meaning* rather
+# than on the literal names "share"/"rarity" is what lets a computed feature
+# like n_by_user_activity_30d take part.
+_r("numeric.share", "Share", parent="numeric", role="measure",
+   description="Fraction of rows holding this value; small means rare")
+_r("numeric.rarity", "Rarity", parent="numeric", role="measure",
+   description="Inverse of share; large means rare")

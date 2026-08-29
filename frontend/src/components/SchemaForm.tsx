@@ -111,6 +111,27 @@ export function SchemaForm({ schema, value, onChange, columns = [] }: Props) {
                   set(key, e.target.value === '' ? null : Number(e.target.value))
                 }
               />
+            ) : field.type === 'array' && field.format === 'textarea' ? (
+              // A list where each entry is a line of notation rather than a
+              // word: feature expressions, one per line. Comma-separating them
+              // would be unreadable, and would collide with the commas inside
+              // 'by user, activity_type'.
+              <textarea
+                rows={Math.max(4, Array.isArray(current) ? current.length + 1 : 4)}
+                spellCheck={false}
+                className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-xs"
+                placeholder={'count() by user, activity_type over 30d\ndays_since_last() by user'}
+                value={Array.isArray(current) ? current.join('\n') : String(current ?? '')}
+                onChange={(e) =>
+                  set(
+                    key,
+                    e.target.value
+                      .split('\n')
+                      .map((s) => s.trim())
+                      .filter(Boolean),
+                  )
+                }
+              />
             ) : field.type === 'array' ? (
               <input
                 type="text"

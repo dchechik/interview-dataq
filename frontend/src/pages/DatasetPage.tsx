@@ -308,7 +308,7 @@ function SuggestionCard({
             disabled={operation.isPending}
             className="rounded bg-slate-900 px-2 py-1 text-xs text-white hover:bg-slate-800 disabled:opacity-40"
           >
-            Create
+            {action.op === 'transform' ? 'Add columns' : 'Create'}
           </button>
         )}
       </div>

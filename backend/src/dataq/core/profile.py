@@ -79,3 +79,59 @@ class DatasetProfile(BaseModel):
 
     def by_role(self, *roles: ColumnRole) -> list[ColumnProfile]:
         return [c for c in self.columns if c.role in roles]
+
+
+# Columns that identify a subject you would want several events for -- a user,
+# an address, a vehicle. Shared rather than private to the timeline because
+# feature engineering needs exactly the same judgement: these are the columns
+# worth partitioning behaviour by.
+ENTITY_TYPES: tuple[str, ...] = ("net.ip", "identity.email", "identity.key",
+                                 "geo.country_iso2", "categorical")
+
+# An entity is something you have *several* events for. A column with roughly as
+# many distinct values as rows is a per-row identifier, not an entity: grouping
+# by it puts one event in each group. This is the difference between src_ip and
+# event_id, both of which are identity types.
+ENTITY_MAX_DISTINCT_FRAC = 0.9
+
+
+def is_entity(column: ColumnProfile, types: tuple[str, ...] = ENTITY_TYPES) -> bool:
+    """Is this a thing you would group behaviour by?"""
+    from .semantic import SEMANTIC_TYPES
+
+    if not SEMANTIC_TYPES.matches_any(column.semantic_type, types):
+        return False
+    if column.stats is None:
+        return True  # unprofiled: assume usable rather than hide it
+    return column.stats.distinct_frac < ENTITY_MAX_DISTINCT_FRAC
+
+
+def entity_columns(profile: DatasetProfile,
+                   types: tuple[str, ...] = ENTITY_TYPES) -> list[ColumnProfile]:
+    """Things you could group behaviour by, most actor-like first.
+
+    Requiring a semantic type would be too strict here. Detection needs enough
+    rows to be confident, so on a small or unusual dataset every column comes
+    back untyped -- and a plain repeating dimension is a perfectly good thing to
+    ask "how often does this one do X" about. So a typed entity is preferred,
+    and an untyped repeating dimension still qualifies.
+
+    Ordered by distinct count descending, because that is what separates an
+    actor from a category: many users, few activity types. Deliberately *not*
+    ordered by whether the column has a semantic type -- detection gives up on
+    high-cardinality columns, so a real user id is typically untyped while the
+    5-value activity_type beside it is a confident `categorical`. Ranking types
+    first therefore picks the category over the actor, which is precisely
+    backwards.
+    """
+    def rank(c: ColumnProfile) -> int | None:
+        if c.role in ("time", "measure", "ignore"):
+            return None
+        if c.stats is not None and c.stats.distinct_frac >= ENTITY_MAX_DISTINCT_FRAC:
+            return None  # a per-row identifier: grouping puts one event in each
+        if not (is_entity(c, types) or c.role == "dimension"):
+            return None
+        return -(c.stats.distinct_count if c.stats else 0)
+
+    scored = [(r, c) for c in profile.columns if (r := rank(c)) is not None]
+    return [c for _, c in sorted(scored, key=lambda pair: pair[0])]

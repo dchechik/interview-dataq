@@ -40,13 +40,22 @@ def compute_stats(
         f"CREATE OR REPLACE TEMP VIEW _dq_sample AS "
         f"SELECT * FROM {source_sql} USING SAMPLE reservoir({int(sample_rows)} ROWS)"
     )
-    total = conn.execute(f"SELECT count(*) FROM {source_sql}").fetchone()[0]
     n = conn.execute("SELECT count(*) FROM _dq_sample").fetchone()[0]
 
     if n == 0:
         return [ColumnStats(name=c, physical_type=t, row_count=0) for c, t in columns]
 
-    # Aggregate every column in a single scan of the sample.
+    # Counts come from the whole table, not the sample. Distinct counts are the
+    # reason: sampled, they are capped at the sample size, so any column with
+    # more distinct values than that looks like a per-row identifier -- and
+    # "roughly as many distinct values as rows" is exactly the test used to tell
+    # a user id from an event id. A 40,000-user column sampled at 20,000 rows
+    # would be read as a primary key and excluded from everything.
+    #
+    # It is affordable: approx_count_distinct is HyperLogLog, and one pass over
+    # 11.4M rows x 19 columns measures at 0.3s. Only sample_values and
+    # top_values stay sampled, because those genuinely need rows rather than
+    # aggregates.
     parts: list[str] = []
     for name, _ in columns:
         q = quote_ident(name)
@@ -56,7 +65,10 @@ def compute_stats(
             f"CAST(min({q}) AS VARCHAR)",
             f"CAST(max({q}) AS VARCHAR)",
         ]
-    row = conn.execute(f"SELECT {', '.join(parts)} FROM _dq_sample").fetchone()
+    row = conn.execute(
+        f"SELECT count(*), {', '.join(parts)} FROM {source_sql}"
+    ).fetchone()
+    total, row = int(row[0]), row[1:]
 
     out: list[ColumnStats] = []
     for i, (name, ptype) in enumerate(columns):
@@ -82,13 +94,11 @@ def compute_stats(
             ColumnStats(
                 name=name,
                 physical_type=ptype,
-                # Report against the sample so distinct_frac is meaningful, but
-                # carry the true total separately on the profile.
-                row_count=int(n),
-                null_count=int(n) - int(non_null or 0),
+                row_count=total,
+                null_count=total - int(non_null or 0),
                 # approx_count_distinct is HyperLogLog and can overshoot the true
                 # count; clamp so distinct_frac never exceeds 1.
-                distinct_count=min(int(ndv or 0), int(n)),
+                distinct_count=min(int(ndv or 0), total),
                 min=cmin,
                 max=cmax,
                 sample_values=samples,
@@ -96,7 +106,6 @@ def compute_stats(
             )
         )
     conn.execute("DROP VIEW IF EXISTS _dq_sample")
-    _ = total
     return out
 
 

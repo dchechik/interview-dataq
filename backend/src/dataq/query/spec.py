@@ -95,7 +95,10 @@ class QuerySpec(BaseModel):
     select: list[Select] = []
     group_by: list[str] = []
     order_by: list[Sort] = []
-    limit: int = Field(default=1000, ge=1, le=1_000_000)
+    # None means no LIMIT clause. Only materialisation should use it -- a query
+    # that writes a dataset must not silently stop at a round number -- and the
+    # interactive path stays bounded by fetchmany() whatever this says.
+    limit: int | None = Field(default=1000, ge=1, le=1_000_000)
     offset: int = Field(default=0, ge=0)
 
     @property

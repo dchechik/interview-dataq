@@ -3,6 +3,7 @@
 from . import (  # noqa: F401
     aggregators,
     detectors,
+    features,
     readers,
     suggesters,
     timeline,

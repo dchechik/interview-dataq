@@ -99,6 +99,32 @@ class ParseCheck:
 
 
 @dataclass
+class JoinPlan:
+    """Columns to bring across from another dataset, keyed on any number of columns.
+
+    The standalone join op matches on exactly one column pair, which is enough to
+    attach a value-frequency table but not a per-``(user, activity_type)`` one --
+    the statistic you actually want about behaviour. This carries a composite
+    key, and stays a *transform*: the result is a new version of the dataset it
+    was given, not a new dataset.
+
+    Cardinality is still preserved, but only because the runtime checks it. A
+    left join onto a right side with duplicate keys multiplies rows, so the
+    right side is verified unique on ``on`` before anything is written.
+    """
+
+    # A FROM-clause fragment for the right side, resolved by the service (a
+    # plugin never sees storage paths).
+    source_sql: str
+    # (left SQL expression, right column). The left side is qualified with the
+    # alias ``l``, so a derived key reads ``date_trunc('day', l."ts")``.
+    on: tuple[tuple[str, str], ...]
+    # (right column, output name). Output names must not collide with the left
+    # side's, which the runtime enforces.
+    select: tuple[tuple[str, str], ...]
+
+
+@dataclass
 class SqlPlan:
     """What a ``pushdown`` transform returns: column expressions, not a query.
 
@@ -112,6 +138,9 @@ class SqlPlan:
     where: str | None = None
     # Post-conditions the runtime enforces before writing. See ParseCheck.
     checks: tuple[ParseCheck, ...] = ()
+    # Optionally widen the source with columns from another dataset first, so
+    # ``add`` expressions can reference them. See JoinPlan.
+    join: JoinPlan | None = None
 
 
 @dataclass
@@ -122,6 +151,19 @@ class TransformCtx:
     source_sql: str
     profile: DatasetProfile
     params: Any
+    # Resolves another dataset to a FROM-clause fragment and its columns, for a
+    # transform that declares a JoinPlan. A plugin never sees storage paths or
+    # the catalog -- it names a dataset id and gets back something it can join
+    # to, which is the same containment the query compiler has.
+    resolve: Any = None
+
+    def resolve_dataset(self, dataset_id: str, version: int | None = None):
+        if self.resolve is None:
+            raise RuntimeError(
+                "this transform asked to join another dataset, but the runtime "
+                "gave it no resolver"
+            )
+        return self.resolve(dataset_id, version)
 
     def col(self, name: str) -> str:
         """Safely quoted reference to a source column."""

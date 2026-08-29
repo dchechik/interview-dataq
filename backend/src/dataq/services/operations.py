@@ -216,6 +216,7 @@ def run_transform_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) ->
                 plugin=plugin, params=params, conn=conn,
                 source_sql=prepared.source_sql, profile=prepared.profile,
                 storage=ctx.storage, ref=ref, ctx=job_ctx, settings=ctx.settings,
+                resolve=ctx.resolve_source,
                 resume_parts=resume_parts, resume_rows=resume_rows,
                 model=model, max_cost_usd=req.max_cost_usd,
             )
@@ -293,6 +294,16 @@ def run_aggregate_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) ->
     with ctx.warehouse.cur() as conn:
         with ctx.warehouse.ddl_lock:
             stored = ctx.storage.write_relation(ref, agg_sql, conn, compiled.params)
+        if plan.spec.limit is not None and stored.rows >= plan.spec.limit:
+            # The result stopped exactly on the limit, so it is almost certainly
+            # cut short. Left alone this is the worst kind of wrong: a complete
+            # -looking table that is missing rows, which then annotates only
+            # part of the data it is joined back to.
+            raise ValueError(
+                f"the aggregate produced {stored.rows:,} rows and hit its limit "
+                f"of {plan.spec.limit:,}, so it is truncated and incomplete. "
+                "Group by fewer columns, or use a coarser time grain."
+            )
         source = ctx.storage.sql_source(stored)
         rel = conn.sql(f"SELECT * FROM {source} LIMIT 0")
         columns = list(zip(rel.columns, [str(t) for t in rel.types], strict=True))

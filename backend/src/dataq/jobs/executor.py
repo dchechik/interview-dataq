@@ -15,7 +15,7 @@ import pyarrow as pa
 
 from ..config import Settings
 from ..core.profile import DatasetProfile
-from ..plugins.kinds import SqlPlan, Transform, TransformCtx
+from ..plugins.kinds import JoinPlan, SqlPlan, Transform, TransformCtx
 from ..query.compiler import quote_ident
 from ..storage.base import StorageBackend, StoredRef, VersionRef
 from .context import JobCtx
@@ -52,6 +52,61 @@ def build_projection(plan: SqlPlan, source_columns: list[str]) -> str:
             continue
         parts.append(f"({expr}) AS {quote_ident(name)}")
     return ", ".join(parts) if parts else "*"
+
+
+def build_join_source(join: JoinPlan, source_sql: str, source_columns: list[str],
+                      conn) -> tuple[str, list[str]]:
+    """Widen the source with columns from another dataset.
+
+    The join is wrapped in a subquery rather than composed into the outer SELECT
+    so that the projection above it stays unqualified and unambiguous -- exactly
+    as it is without a join. Which means ``add`` expressions can reference the
+    brought-across columns by name without knowing a join happened at all.
+    """
+    collisions = [alias for _, alias in join.select if alias in set(source_columns)]
+    if collisions:
+        raise ValueError(
+            f"joining would produce duplicate columns: {', '.join(collisions)}. "
+            "Rename them, or drop them from the join's select list."
+        )
+
+    keys = ", ".join(quote_ident(right) for _, right in join.on)
+    duplicated = conn.execute(
+        f"SELECT count(*) FROM (SELECT {keys} FROM {join.source_sql} "
+        f"GROUP BY ALL HAVING count(*) > 1)"
+    ).fetchone()[0]
+    if duplicated:
+        # A left join onto duplicated keys silently multiplies rows. Every row
+        # count downstream would then be wrong, and nothing would say so.
+        raise ValueError(
+            f"the joined dataset has {duplicated:,} duplicated values of "
+            f"({keys}), so joining it would multiply rows instead of annotating "
+            "them. It must have one row per key."
+        )
+
+    on = " AND ".join(f"({left}) = r.{quote_ident(right)}" for left, right in join.on)
+    brought = ", ".join(f"r.{quote_ident(right)} AS {quote_ident(alias)}"
+                        for right, alias in join.select)
+    sql = (f"(SELECT l.*, {brought} FROM {source_sql} l "
+           f"LEFT JOIN {join.source_sql} r ON {on})")
+
+    # How much of the data this actually annotates. A left join answers "no
+    # match" with NULL, so a wrong key or an incomplete right side produces a
+    # column of nothing and a job that reports success -- the same silence the
+    # parse checks exist to break.
+    probe = quote_ident(join.select[0][1])
+    row = conn.execute(
+        f"SELECT count(*), count({probe}) FROM "
+        f"(SELECT * FROM {sql} LIMIT {PREFLIGHT_ROWS})"
+    ).fetchone()
+    sampled, matched = int(row[0] or 0), int(row[1] or 0)
+    if sampled and matched == 0:
+        raise ValueError(
+            f"none of {sampled:,} sampled rows found a match in the joined "
+            f"dataset, so every attached column would be empty. Check the join "
+            f"keys: {', '.join(right for _, right in join.on)}."
+        )
+    return sql, [alias for _, alias in join.select], (matched, sampled)
 
 
 # Rows examined by the preflight. Enough that a wrong format shows up as a wall
@@ -104,17 +159,39 @@ def run_checks(plan: SqlPlan, conn, source_sql: str, ctx: JobCtx) -> None:
 
 def run_pushdown_transform(
     plugin: Transform, params: Any, conn, source_sql: str, profile: DatasetProfile,
-    storage: StorageBackend, ref: VersionRef, ctx: JobCtx,
+    storage: StorageBackend, ref: VersionRef, ctx: JobCtx, resolve=None,
 ) -> ExecResult:
     plan = plugin.sql(TransformCtx(conn=conn, source_sql=source_sql, profile=profile,
-                                   params=params))
+                                   params=params, resolve=resolve))
+    columns = [c.name for c in profile.columns]
+    if plan.join is not None:
+        before = conn.execute(f"SELECT count(*) FROM {source_sql}").fetchone()[0]
+        source_sql, brought, rate = build_join_source(
+            plan.join, source_sql, columns, conn)
+        columns += brought
+        matched, sampled = rate
+        ctx.log(f"{plugin.id}: joined {len(brought)} column(s) onto {before:,} rows; "
+                f"{matched}/{sampled} sampled rows matched "
+                f"({matched / sampled:.0%})" if sampled else "no rows to match")
+    else:
+        before = None
+
     run_checks(plan, conn, source_sql, ctx)
-    projection = build_projection(plan, [c.name for c in profile.columns])
+    projection = build_projection(plan, columns)
     sql = f"SELECT {projection} FROM {source_sql}"
     if plan.where:
         sql += f" WHERE {plan.where}"
     ctx.log(f"{plugin.id}: pushdown -> {sql[:200]}")
     stored = storage.write_relation(ref, sql, conn)
+
+    if before is not None and plan.where is None and stored.rows != before:
+        # The uniqueness check should have made this impossible. Belt and braces,
+        # because a row count that changes during an *annotation* is the kind of
+        # corruption that stays invisible until someone reconciles a total.
+        raise ValueError(
+            f"joining changed the row count from {before:,} to {stored.rows:,}; "
+            "the joined dataset must have one row per key"
+        )
     ctx.progress(stored.rows, force=True)
     return ExecResult(stored=stored, rows=stored.rows)
 
@@ -224,12 +301,12 @@ def run_transform(
     plugin: Transform, params: Any, conn, source_sql: str, profile: DatasetProfile,
     storage: StorageBackend, ref: VersionRef, ctx: JobCtx, settings: Settings,
     resume_parts: int = 0, resume_rows: int = 0,
-    model=None, max_cost_usd: float | None = None,
+    model=None, max_cost_usd: float | None = None, resolve=None,
 ) -> ExecResult:
     """Dispatch on execution mode. This is the only place that branches on it."""
     if plugin.mode == "pushdown":
         return run_pushdown_transform(
-            plugin, params, conn, source_sql, profile, storage, ref, ctx
+            plugin, params, conn, source_sql, profile, storage, ref, ctx, resolve
         )
     if plugin.mode in ("batch", "external"):
         return run_streaming_transform(

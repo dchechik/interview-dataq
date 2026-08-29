@@ -25,6 +25,8 @@ export interface JsonSchema {
   default?: unknown
   minimum?: number
   maximum?: number
+  /** A plugin's hint about the widget to use; currently only 'textarea'. */
+  format?: string
   $defs?: Record<string, JsonSchema>
   $ref?: string
 }

@@ -307,3 +307,40 @@ class CardinalityDetector(Detector):
             return [SemanticGuess(semantic_type="identity.key", confidence=0.55,
                                   rationale=f"{frac:.0%} of values are distinct; looks like a key")]
         return []
+
+
+@register
+class ShareDetector(Detector):
+    """Columns saying how common something is.
+
+    Typed rather than recognised by name so that anything downstream wanting
+    "the column that says how unusual this row is" can ask the semantic layer
+    instead of matching on the literal strings "share" and "rarity". That is
+    what lets a computed feature take part in the timeline's highlighting.
+
+    Both name and range are required. A fraction in 0..1 is far too common a
+    shape to claim on its own -- a completion ratio is not a rarity score.
+    """
+
+    id: ClassVar[str] = "detect.share"
+    title: ClassVar[str] = "Share / rarity"
+
+    def detect(self, stats: ColumnStats) -> list[SemanticGuess]:
+        if not _is_numeric(stats):
+            return []
+        rarity = _name_has(stats, "rarity")
+        share = _name_has(stats, "share", "freq", "frequency", "proportion", "pct")
+        if not (rarity or share):
+            return []
+        try:
+            lo, hi = float(stats.min), float(stats.max)
+        except (TypeError, ValueError):
+            return []
+        if not (lo >= 0.0 and hi <= 1.0):
+            return []
+        kind = "numeric.rarity" if rarity else "numeric.share"
+        return [SemanticGuess(
+            semantic_type=kind, confidence=0.85,
+            rationale=f"{stats.name} is a fraction in 0..1 and named like a "
+                      "measure of how common a value is",
+        )]

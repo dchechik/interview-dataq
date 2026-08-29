@@ -12,7 +12,7 @@ from typing import ClassVar
 
 from pydantic import BaseModel
 
-from ...core.profile import ColumnProfile, DatasetProfile
+from ...core.profile import ColumnProfile, DatasetProfile, entity_columns
 from ...core.semantic import SEMANTIC_TYPES
 from ..base import NoParams, Produces, register
 from ..kinds import SuggestCtx, Suggester, Suggestion
@@ -26,6 +26,11 @@ def _inspect(plugin_id: str, dataset_id: str, params: dict) -> dict:
 def _operation(op: str, plugin_id: str, dataset_id: str, params: dict) -> dict:
     return {"op": op, "plugin_id": plugin_id,
             "inputs": [{"dataset_id": dataset_id}], "params": params}
+
+
+# Below this a column is a flag or a status, not something you study behaviour
+# per-instance of.
+MIN_ACTOR_DISTINCT = 3
 
 
 def _interesting_measures(profile: DatasetProfile) -> list[ColumnProfile]:
@@ -108,7 +113,13 @@ class VizSuggester(Suggester):
         # charts when the dataset carries a rarity column, because then the view
         # can point straight at the events that stand out.
         if times:
-            annotated = any(c.name in ("share", "rarity") for c in p.columns)
+            # Asked of the semantic layer rather than by name, so a computed
+            # feature counts as an annotation just as a joined-in share does.
+            annotated = any(
+                SEMANTIC_TYPES.matches_any(c.semantic_type,
+                                           ("numeric.share", "numeric.rarity"))
+                for c in p.columns
+            ) or any(c.name in ("share", "rarity") for c in p.columns)
             headline = next(
                 (c.name for c in p.columns
                  if SEMANTIC_TYPES.matches_any(c.semantic_type, ("categorical",))),
@@ -224,6 +235,85 @@ class AggregateSuggester(Suggester):
                 break
 
         return sorted(out, key=lambda s: s.score, reverse=True)
+
+
+@register
+class FeatureSuggester(Suggester):
+    """Propose behavioural features for event-shaped datasets.
+
+    A dataset with a time column and something to call an actor is a log of
+    behaviour, and the questions people ask of one are always the same shape:
+    how often does this actor do this, how does that compare to everyone, and
+    how long since they last did it. Suggested rather than left to be
+    discovered, because the two-step shape -- build a feature table, then attach
+    it -- is not something a user would think to ask for.
+    """
+
+    id: ClassVar[str] = "suggest.features"
+    title: ClassVar[str] = "Suggested features"
+    Params: ClassVar[type[BaseModel]] = NoParams
+
+    def suggest(self, ctx: SuggestCtx) -> list[Suggestion]:
+        p = ctx.profile
+        times = p.by_role("time")
+        if not times:
+            return []
+        entities = entity_columns(p)
+        # An actor has to take enough values for "per actor" to mean something.
+        # Without this the NYC taxi data -- which has no driver or medallion
+        # column at all -- gets features grouped by store_and_fwd_flag, a Y/N
+        # flag, and the suggestion is worse than none. Real actors have hundreds
+        # of values; this is a floor that excludes flags, not a quality bar.
+        actors = [c for c in entities
+                  if (c.stats.distinct_count if c.stats else 0) >= MIN_ACTOR_DISTINCT]
+        if not actors:
+            return []
+        entities = actors + [c for c in entities if c not in actors]
+
+        actor = entities[0].name
+        # The second entity, if there is one, is what the actor *does*: an
+        # activity type, an endpoint, a country. Features about the pair are the
+        # interesting ones -- "this user, this action" rather than either alone.
+        kinds = [c.name for c in entities[1:]]
+        pair = [actor, *kinds[:1]]
+        by = ", ".join(pair)
+        measures = _interesting_measures(p)
+
+        features = [
+            f"count() by {by} over 30d",
+            f"count() by {by} in day",
+            f"days_since_last() by {by}",
+            f"share() by {pair[-1]}",
+        ]
+        if measures:
+            features.append(f"avg({measures[0].name}) by {actor} over 30d")
+
+        out = [Suggestion(
+            title=f"Behavioural features for {actor}",
+            rationale=(
+                f"{p.row_count:,} timestamped events with {actor} to group by, so "
+                f"each row can carry how often this {actor} does this, recently "
+                "and overall"
+            ),
+            kind="enrich", score=0.88,
+            action=_operation("transform", "enrich.features", p.dataset_id,
+                              {"features": features}),
+        )]
+
+        # The feature table is proposed separately because it is worth having on
+        # its own -- you can chart it, and it answers "who is busiest" without
+        # touching the events at all.
+        out.append(Suggestion(
+            title=f"Feature table for {by}",
+            rationale="one row per actor with counts, shares and first/last seen "
+                      "-- a dataset you can chart, and attach back to the events",
+            kind="aggregate", score=0.62,
+            action=_operation("aggregate", "agg.features", p.dataset_id,
+                              {"by": pair, "grain": "day",
+                               "measures": [m.name for m in measures[:1]],
+                               "windows": ["7d", "30d"]}),
+        ))
+        return out
 
 
 @register
