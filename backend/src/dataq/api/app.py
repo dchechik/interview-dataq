@@ -545,15 +545,27 @@ class SpaStaticFiles(StaticFiles):
     refresh or a shared link does not. Unknown paths therefore fall back to
     index.html and let the router resolve them.
 
-    Unknown ``/api/`` paths keep their 404: answering them with an HTML page
-    would turn a typo'd endpoint into a confusing parse error at the caller.
+    Two kinds of path are excluded, both because answering them with HTML turns
+    a missing thing into a baffling one:
+
+    * ``/api/`` -- a typo'd endpoint would reach the caller as a JSON parse
+      error rather than a 404.
+    * anything that names a file -- a missing asset would be served as an HTML
+      page with a 200, and whatever tried to load it fails somewhere far away.
+      This is not hypothetical: a missing worker chunk was served as index.html,
+      the module worker died parsing HTML as JavaScript, and the only visible
+      symptom was a map that drew no points.
+
+    A client-side route has no file extension, which is what separates the two.
     """
 
     async def get_response(self, path: str, scope):
         try:
             return await super().get_response(path, scope)
         except StarletteHTTPException as exc:
-            if exc.status_code != 404 or path.startswith("api/"):
+            if exc.status_code != 404:
+                raise
+            if path.startswith("api/") or "." in path.rsplit("/", 1)[-1]:
                 raise
             return await super().get_response("index.html", scope)
 

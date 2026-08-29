@@ -220,5 +220,14 @@ def test_spa_deep_links_fall_back_to_index(app_ctx, tmp_path):
             missing = client.get("/api/does-not-exist")
             assert missing.status_code == 404
             assert "<!doctype html>" not in missing.text.lower()
+            # Nor does a missing *file*. Serving index.html with a 200 for a
+            # missing chunk cost hours once: the map's web worker fetched HTML,
+            # died parsing it as JavaScript inside the worker, and the only
+            # symptom was a map that drew no points -- no console error, no
+            # failed request. A 404 would have named the problem immediately.
+            for asset in ("/assets/gone.js", "/assets/gone.mjs", "/favicon.png"):
+                r = client.get(asset)
+                assert r.status_code == 404, asset
+                assert "<!doctype html>" not in r.text.lower(), asset
     finally:
         app_module.CTX = None

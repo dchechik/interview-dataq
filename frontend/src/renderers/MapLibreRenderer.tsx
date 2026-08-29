@@ -9,10 +9,15 @@ import {
 // maplibre resolves its worker at runtime as
 // `new URL('./maplibre-gl-worker.mjs', import.meta.url)` with a computed
 // filename, which no bundler can see -- so the asset is never emitted and the
-// worker 404s. Importing it with ?url makes Vite emit and fingerprint it, then
-// setWorkerUrl points maplibre at the real thing. Without this, GeoJSON layers
-// draw nothing while the raster basemap (which needs no worker) looks fine.
-import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
+// worker 404s. Without a worker, GeoJSON sources are never tiled and every data
+// layer draws nothing, while the raster basemap looks perfectly healthy.
+//
+// `?worker&url` rather than plain `?url`: the worker chunk imports a sibling
+// (`./maplibre-gl-shared.mjs`), and `?url` copies the file verbatim as an asset
+// without following that import, so the sibling is never emitted. `?worker`
+// bundles the worker with its dependency graph; `&url` hands back a URL for
+// setWorkerUrl instead of a constructor.
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type { RendererProps } from './index'
