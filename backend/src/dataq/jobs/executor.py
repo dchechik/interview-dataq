@@ -22,6 +22,10 @@ from .context import JobCtx
 from .external import ExternalRunner, ResultCache
 
 
+class ParseFailed(ValueError):
+    """A transform's output did not parse well enough to be worth writing."""
+
+
 @dataclass
 class ExecResult:
     stored: StoredRef
@@ -50,12 +54,61 @@ def build_projection(plan: SqlPlan, source_columns: list[str]) -> str:
     return ", ".join(parts) if parts else "*"
 
 
+# Rows examined by the preflight. Enough that a wrong format shows up as a wall
+# of failures, small enough that the check costs nothing next to the write.
+PREFLIGHT_ROWS = 20_000
+
+
+def run_checks(plan: SqlPlan, conn, source_sql: str, ctx: JobCtx) -> None:
+    """Enforce a plan's parse post-conditions, before anything is written.
+
+    Runs on a bounded sample so a wrong format is rejected in milliseconds rather
+    than after materialising every row of a multi-GB dataset.
+    """
+    for check in plan.checks:
+        expr = plan.add.get(check.column) or plan.replace.get(check.column)
+        if expr is None:  # the transform declared a check on a column it dropped
+            continue
+        src = quote_ident(check.source)
+        row = conn.execute(
+            f"SELECT count(*) FILTER (WHERE {src} IS NOT NULL), "
+            f"       count(*) FILTER (WHERE {src} IS NOT NULL AND ({expr}) IS NOT NULL), "
+            f"       min(CAST({src} AS VARCHAR)) FILTER "
+            f"         (WHERE {src} IS NOT NULL AND ({expr}) IS NULL) "
+            f"FROM (SELECT * FROM {source_sql} LIMIT {PREFLIGHT_ROWS})"
+        ).fetchone()
+        considered, parsed, example = int(row[0] or 0), int(row[1] or 0), row[2]
+
+        if considered == 0:
+            # Every sampled input was NULL, so the check has nothing to say. Not
+            # an error: an all-null column is the source's problem, not this
+            # transform's, and failing here would misattribute it.
+            ctx.log(f"check {check.column}: no non-null input in the sample, skipped")
+            continue
+
+        rate = parsed / considered
+        ctx.log(f"check {check.column}: parsed {parsed}/{considered} ({rate:.1%})")
+        if rate >= check.min_success:
+            continue
+
+        detail = (
+            f"Parsing {check.source} produced a value for only {parsed:,} of "
+            f"{considered:,} sampled rows ({rate:.1%})."
+        )
+        if example is not None:
+            detail += f" For example, {example!r} did not parse."
+        if check.hint:
+            detail += f" {check.hint}"
+        raise ParseFailed(detail)
+
+
 def run_pushdown_transform(
     plugin: Transform, params: Any, conn, source_sql: str, profile: DatasetProfile,
     storage: StorageBackend, ref: VersionRef, ctx: JobCtx,
 ) -> ExecResult:
     plan = plugin.sql(TransformCtx(conn=conn, source_sql=source_sql, profile=profile,
                                    params=params))
+    run_checks(plan, conn, source_sql, ctx)
     projection = build_projection(plan, [c.name for c in profile.columns])
     sql = f"SELECT {projection} FROM {source_sql}"
     if plan.where:

@@ -89,11 +89,23 @@ export interface ColumnStats {
   top_values: [unknown, number][]
 }
 
+export interface FormatCandidate {
+  format: string
+  label: string
+  success_rate: number
+  example_input: string
+  example_output: string
+  /** Set when another format fits equally well and disagrees about the date. */
+  conflict: string | null
+}
+
 export interface SemanticGuess {
   semantic_type: string
   confidence: number
   rationale: string
   detector_id: string
+  /** Populated only for temporal columns: how to read them, best first. */
+  formats: FormatCandidate[]
 }
 
 export interface ColumnProfile {
@@ -105,6 +117,8 @@ export interface ColumnProfile {
   pinned: boolean
   stats: ColumnStats | null
   candidates: SemanticGuess[]
+  /** A choice the importer had to make that the data could not settle. */
+  warning: string | null
 }
 
 export interface DatasetProfile {

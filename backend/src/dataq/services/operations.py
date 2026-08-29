@@ -23,7 +23,7 @@ from ..storage.base import VersionRef
 from .browse import assert_readable_uri
 from .context import AppContext
 from .model import make_model_client
-from .profiler import compute_stats, profile_columns
+from .profiler import compute_stats, profile_columns, sniffer_ambiguities
 
 
 class DatasetInput(BaseModel):
@@ -88,10 +88,44 @@ def _prepare(ctx: AppContext, inp: DatasetInput) -> _Prepared:
 def profile_and_store(
     ctx: AppContext, conn, dataset_id: str, version_id: str, source_sql: str,
     columns: list[tuple[str, str]], previous: list | None = None,
+    warnings: dict[str, str] | None = None,
 ) -> None:
     stats = compute_stats(conn, source_sql, columns, ctx.settings.profile_sample_rows)
     profiles = profile_columns(stats, previous=previous)
+    # A warning is a fact about how the column was read at import, so it belongs
+    # to the column for as long as the column survives. Recomputing it later is
+    # impossible -- the raw text is gone after the first version -- so a column
+    # carried through a transform keeps the warning it arrived with. Without
+    # this, the first transform on a dataset quietly clears every warning on it.
+    carried = {c.name: c.warning for c in (previous or []) if c.warning}
+    for prof in profiles:
+        prof.warning = (warnings or {}).get(prof.name) or carried.get(prof.name)
     ctx.catalog.set_columns(version_id, profiles)
+
+
+def _sniffer_warnings(conn, reader_cls, uri: str, req_params: dict,
+                      columns: list[tuple[str, str]], job_ctx: JobCtx) -> dict[str, str]:
+    """Check what the reader decided about ambiguous dates, while the text lasts.
+
+    Only possible for readers that can hand back the unconverted text -- CSV,
+    via all_varchar. For the rest there is nothing to compare against, and the
+    empty dict says so honestly rather than implying the column was checked.
+    """
+    temporal = [n for n, t in columns if t.upper().startswith(("DATE", "TIMESTAMP"))]
+    if not temporal or "all_varchar" not in reader_cls.Params.model_fields:
+        return {}
+    try:
+        raw_params = reader_cls.parse_params({**req_params, "all_varchar": True})
+        raw = reader_cls().to_relation(conn, uri, raw_params)
+        typed = reader_cls().to_relation(
+            conn, uri, reader_cls.parse_params(req_params))
+        found = sniffer_ambiguities(conn, raw.sql_query(), typed.sql_query(), temporal)
+    except Exception as exc:  # noqa: BLE001 -- a diagnostic must not fail the import
+        job_ctx.log(f"date-format check skipped: {exc}")
+        return {}
+    for column, message in found.items():
+        job_ctx.log(f"WARNING {column}: {message}")
+    return found
 
 
 # --------------------------------------------------------------------------- #
@@ -135,8 +169,10 @@ def run_import(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
             row_count=stored.rows, step_id=job_ctx.step_id,
         )
         job_ctx.log(f"imported {stored.rows:,} rows into {name}; profiling")
+        warnings = _sniffer_warnings(conn, reader_cls, req.uri, req.params, columns, job_ctx)
         profile_and_store(
-            ctx, conn, dataset.id, version.id, ctx.storage.sql_source(stored), columns
+            ctx, conn, dataset.id, version.id, ctx.storage.sql_source(stored), columns,
+            warnings=warnings,
         )
         conn.execute(f"DROP VIEW IF EXISTS {view}")
 

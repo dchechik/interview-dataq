@@ -30,6 +30,15 @@ class CsvParams(BaseModel):
     ignore_errors: bool = Field(
         default=False, description="Skip malformed rows instead of failing the import"
     )
+    # DuckDB's sniffer decides for itself whether 03/04/2016 is March or April,
+    # and does not report which it chose. These pin it. Profiling raises a
+    # warning naming the column when the raw text cannot settle the question.
+    dateformat: str | None = Field(
+        default=None, description="strptime format for DATE columns, e.g. %d/%m/%Y"
+    )
+    timestampformat: str | None = Field(
+        default=None, description="strptime format for TIMESTAMP columns"
+    )
 
 
 @register
@@ -52,6 +61,10 @@ class CsvReader(Reader):
             opts.append("all_varchar=true")
         if params.ignore_errors:
             opts.append("ignore_errors=true")
+        if params.dateformat:
+            opts.append(f"dateformat={_lit(params.dateformat)}")
+        if params.timestampformat:
+            opts.append(f"timestampformat={_lit(params.timestampformat)}")
         return conn.sql(f"SELECT * FROM read_csv({_lit(uri)}, {', '.join(opts)})")
 
 

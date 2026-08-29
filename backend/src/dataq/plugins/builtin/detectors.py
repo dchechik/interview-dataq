@@ -11,6 +11,7 @@ import ipaddress
 import re
 from typing import ClassVar
 
+from ...core.datefmt import FormatCandidate, ambiguous, infer_epoch, infer_formats
 from ...core.profile import ColumnStats, SemanticGuess
 from ..base import register
 from ..kinds import Detector
@@ -143,14 +144,17 @@ class LatLngDetector(Detector):
 
 @register
 class TimestampDetector(Detector):
-    """Temporal columns, physical or string-encoded."""
+    """Temporal columns: physical, string-encoded in any of ~35 formats, or epoch.
+
+    A text column only counts as temporal if some format actually parses it. That
+    format is carried on the guess, because knowing a column holds dates is not
+    enough to read it -- 03/04/2016 is March or April depending on a convention
+    the data does not record. When the sample cannot settle which, the conflict
+    travels with the guess so the transform can refuse to guess and ask instead.
+    """
 
     id: ClassVar[str] = "detect.timestamp"
     title: ClassVar[str] = "Timestamp"
-
-    ISO_RE: ClassVar[re.Pattern] = re.compile(
-        r"^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?"
-    )
 
     def detect(self, stats: ColumnStats) -> list[SemanticGuess]:
         pt = stats.physical_type.upper()
@@ -160,17 +164,55 @@ class TimestampDetector(Detector):
         if pt.startswith("DATE"):
             return [SemanticGuess(semantic_type="time.date", confidence=0.99,
                                   rationale="column is physically a DATE")]
+
+        if _is_numeric(stats):
+            return self._epoch(stats)
         if not _is_text(stats):
             return []
+
         vals = _strings(stats)
-        rate = _hit_rate(vals, lambda v: bool(self.ISO_RE.match(v.strip())))
-        if rate < 0.9:
+        formats = infer_formats(vals)
+        if not formats:
             return []
-        has_time = any(":" in v for v in vals)
+
+        best = formats[0]
+        has_time = any(c in best.format for c in ("%H", "%I"))
+        # An unambiguous parse of the whole sample is strong evidence. An
+        # ambiguous one is equally strong evidence that the column is temporal --
+        # the uncertainty is about *which* reading, not about whether it is a
+        # date -- so the confidence stays high and the conflict is carried
+        # separately for the transform to act on.
+        conf = 0.9 if best.success_rate == 1.0 else 0.75
+        if ambiguous(formats):
+            rationale = (
+                f"parses as {best.label}, but ambiguously: {best.conflict}. "
+                "Choose a format when parsing."
+            )
+        else:
+            rationale = (f"{best.success_rate:.0%} of sampled values parse as "
+                         f"{best.label} (stored as text)")
         return [SemanticGuess(
             semantic_type="time.timestamp" if has_time else "time.date",
-            confidence=0.75,
-            rationale=f"{rate:.0%} of sampled values look like ISO date/times (stored as text)",
+            confidence=conf, rationale=rationale, formats=formats,
+        )]
+
+    def _epoch(self, stats: ColumnStats) -> list[SemanticGuess]:
+        """Epoch time hiding in a numeric column.
+
+        Range alone would flag any large counter, so a name hint is required --
+        the same reasoning that makes LatLngDetector demand one.
+        """
+        if not _name_has(stats, "time", "date", "ts", "epoch", "stamp", "_at"):
+            return []
+        found = infer_epoch(stats.min, stats.max)
+        if not found:
+            return []
+        unit, label = found
+        return [SemanticGuess(
+            semantic_type="time.timestamp", confidence=0.7,
+            rationale=f"name suggests a time and values fall in the range of {label}",
+            formats=[FormatCandidate(format=f"epoch:{unit}", label=label,
+                                     success_rate=1.0)],
         )]
 
 

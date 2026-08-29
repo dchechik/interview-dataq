@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from .datefmt import FormatCandidate
 from .types import ColumnRole
 
 
@@ -37,6 +38,12 @@ class SemanticGuess(BaseModel):
     confidence: float = 0.0
     rationale: str = ""
     detector_id: str = ""
+    # How to read the column, when knowing its type is not enough to read it.
+    # Only temporal detectors populate this: "this is a date" does not tell you
+    # whether 03/04 is March or April, and the transform needs to be told.
+    # Ranked best-first; a conflict on the first entry means the data cannot
+    # settle it and a human must.
+    formats: list[FormatCandidate] = []
 
 
 class ColumnProfile(BaseModel):
@@ -51,6 +58,9 @@ class ColumnProfile(BaseModel):
     pinned: bool = False
     stats: ColumnStats | None = None
     candidates: list[SemanticGuess] = []
+    # Something the user needs to know that the data cannot settle -- currently
+    # only that the reader silently picked one reading of an ambiguous date.
+    warning: str | None = None
 
 
 class DatasetProfile(BaseModel):

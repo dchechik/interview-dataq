@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, inspect
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from ..config import Settings
@@ -22,11 +22,44 @@ def make_engine(settings: Settings) -> Engine:
         connect_args={"check_same_thread": False},
     )
     SQLModel.metadata.create_all(engine)
+    _add_missing_columns(engine)
     with engine.connect() as c:
         # WAL lets the API read while a job worker writes.
         c.exec_driver_sql("PRAGMA journal_mode=WAL")
         c.exec_driver_sql("PRAGMA busy_timeout=5000")
     return engine
+
+
+def _add_missing_columns(engine: Engine) -> None:
+    """Bring an existing catalog up to the current models.
+
+    ``create_all`` creates missing *tables* and silently ignores missing
+    *columns*, so adding a field to a model works perfectly against a fresh
+    database -- every test -- and breaks the first query against a catalog that
+    already exists. Which is to say: it breaks only in deployment, and only
+    after the schema change looked fine.
+
+    Additive changes are the only ones handled, because they are the only ones
+    that are safe without knowing what the data means. A column that is neither
+    nullable nor defaulted cannot be filled in for existing rows, so it is left
+    alone and the error it eventually causes says something true.
+    """
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    with engine.begin() as conn:
+        for table in SQLModel.metadata.sorted_tables:
+            if table.name not in existing_tables:
+                continue
+            have = {c["name"] for c in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in have:
+                    continue
+                if not (column.nullable or column.default is not None):
+                    continue
+                ddl = column.type.compile(engine.dialect)
+                conn.exec_driver_sql(
+                    f"ALTER TABLE {table.name} ADD COLUMN {column.name} {ddl}"
+                )
 
 
 class Catalog:
@@ -129,6 +162,7 @@ class Catalog:
                         confidence=c.confidence, role=c.role, pinned=c.pinned,
                         stats=c.stats.model_dump() if c.stats else {},
                         candidates=[g.model_dump() for g in c.candidates],
+                        warning=c.warning,
                     )
                 )
             s.commit()
@@ -173,6 +207,7 @@ class Catalog:
                     role=r.role, pinned=r.pinned,
                     stats=ColumnStats(**r.stats) if r.stats else None,
                     candidates=[SemanticGuess(**g) for g in r.candidates],
+                    warning=r.warning,
                 )
                 for r in rows
             ]

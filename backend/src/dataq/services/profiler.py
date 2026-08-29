@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..core.datefmt import ambiguous, infer_formats
 from ..core.profile import ColumnProfile, ColumnStats, SemanticGuess
 from ..core.semantic import SEMANTIC_TYPES
 from ..plugins.base import REGISTRY
@@ -146,3 +147,73 @@ def _fallback_role(st: ColumnStats) -> str:
                       "SMALLINT", "TINYINT", "REAL")):
         return "measure"
     return "dimension"
+
+
+# How many raw rows to read back when checking what the sniffer decided.
+SNIFF_CHECK_ROWS = 500
+
+
+def sniffer_ambiguities(
+    conn, raw_sql: str, typed_sql: str, columns: list[str]
+) -> dict[str, str]:
+    """Find date columns whose reading the reader had to guess at.
+
+    DuckDB's CSV sniffer types 03/04/2016 as a DATE without recording whether it
+    read March or April, and it decides per file from the sample -- so the same
+    column in two exports of the same system can come out twelve days apart. By
+    the time profiling sees the column it is a DATE and the evidence is gone.
+
+    So the raw text is read back and re-examined. When no format is uniquely
+    best, the warning names both readings, says which one the reader took (found
+    by checking its output against the candidates), and gives the parameter that
+    pins it.
+    """
+    out: dict[str, str] = {}
+    for name in columns:
+        q = quote_ident(name)
+        try:
+            raw = [r[0] for r in conn.execute(
+                f"SELECT {q} FROM ({raw_sql}) WHERE {q} IS NOT NULL "
+                f"LIMIT {SNIFF_CHECK_ROWS}").fetchall()]
+            typed = [r[0] for r in conn.execute(
+                f"SELECT CAST({q} AS VARCHAR) FROM ({typed_sql}) WHERE {q} IS NOT NULL "
+                f"LIMIT {SNIFF_CHECK_ROWS}").fetchall()]
+        except Exception:  # noqa: BLE001 -- a source that cannot be re-read is not an error
+            continue
+
+        candidates = infer_formats(raw)
+        if not ambiguous(candidates):
+            continue
+
+        chosen = _which_was_chosen(raw, typed, candidates)
+        rivals = [c for c in candidates if c.conflict]
+        alternatives = [c for c in rivals if c.format != (chosen.format if chosen else None)]
+        fix = alternatives[0].format if alternatives else rivals[0].format
+        taken = f"read as {chosen.label}" if chosen else "read one way"
+        out[name] = (
+            f"Ambiguous date format: {rivals[0].conflict}. The importer {taken}. "
+            f"If that is wrong, re-import with timestampformat={fix!r}."
+        )
+    return out
+
+
+def _which_was_chosen(raw: list, typed: list[str], candidates):
+    """Which candidate format explains what the reader actually produced.
+
+    Both lists come from the same file read in the same order, so position i is
+    the same row in each.
+    """
+    from datetime import datetime
+
+    for candidate in candidates:
+        agrees = 0
+        for r, t in zip(raw[:20], typed[:20], strict=False):
+            try:
+                parsed = datetime.strptime(str(r).strip(), candidate.format)
+            except (ValueError, TypeError):
+                continue
+            if str(t).startswith(parsed.strftime("%Y-%m-%d")):
+                agrees += 1
+        if agrees and agrees == len([t for t in typed[:20] if t]):
+            return candidate
+    return None

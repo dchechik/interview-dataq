@@ -75,6 +75,48 @@ meaning, not merely a column name.
 Detected types can be corrected in the UI. A human edit **pins** the column, freezing
 it against future re-detection.
 
+### Dates, and what the importer had to guess
+
+Date columns get their own treatment, because they are where automatic typing
+quietly goes wrong. DuckDB's CSV sniffer types anything non-ISO as `VARCHAR`, so
+`Mar 04, 2016` and `03/04/2016 02:05 PM` arrive as text and stay unusable for
+bucketing, charting or timelines. Profiling now tries ~35 formats against the
+sampled values and records which fit, so `Parse timestamp` needs no format
+argument — it uses what was detected.
+
+Where it refuses to help is ambiguity. `03/04/2016` is the 4th of March in most
+of the world and the 3rd of April in the US, and no amount of statistics settles
+which. Three things follow from that:
+
+- A **text** column that reads both ways is reported as ambiguous, and parsing it
+  fails with both options rather than silently picking one. A sample containing
+  any day past the 12th resolves itself, because then only one reading parses.
+- A column DuckDB already converted is worse, because the sniffer picks a reading
+  **and does not record which**, and by profiling time the text is gone. So the
+  raw file is re-read at import, and a column whose text could not settle the
+  question gets a warning naming both readings, the one the importer took, and
+  the `timestampformat` that pins the other. It shows as a `check format` badge
+  in the schema table.
+- Numeric columns named like times are checked against the epoch ranges, so
+  `event_time` as a BIGINT is recognised rather than averaged.
+
+### Parsing that fails says so
+
+Every parsing expression DuckDB offers — `try_cast`, `try_strptime` — reports
+failure by returning NULL. A transform with the wrong format therefore *succeeds*,
+writes a column of NULLs, and reports the full row count; the dataset looks fine
+until something downstream has nothing to work with.
+
+So a `SqlPlan` can declare a `ParseCheck` on a column it produces, and the runtime
+measures how many non-null inputs yielded non-null outputs — on a 20k-row sample,
+before writing anything, so a wrong format costs milliseconds rather than a full
+pass over a multi-GB dataset. The error names the rate, an example value that
+failed, and the formats that would have worked.
+
+The check is for wrong formats, not imperfect data: the default threshold tolerates
+the handful of `n/a` rows every real column has, and an all-null input is not
+blamed on the transform that could not parse it.
+
 ### Importing without typing a path
 
 DuckDB reads data files **in place**, so the import box needs a path the *server*

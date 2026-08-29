@@ -78,6 +78,27 @@ class Detector(Plugin, abc.ABC):
 # 3. Transform  (normalize / extract / annotate -- one kind, three modes)
 # --------------------------------------------------------------------------- #
 @dataclass
+class ParseCheck:
+    """A post-condition on a produced column: it must actually have parsed.
+
+    Every parsing expression DuckDB offers -- try_cast, try_strptime -- answers
+    failure with NULL rather than an error, by design. A transform that gets the
+    format wrong therefore *succeeds*, writes a column of NULLs, and reports the
+    full row count. The dataset looks fine until something downstream quietly has
+    nothing to work with.
+
+    Declaring the check moves that from silent to loud: the runtime measures how
+    many non-null inputs produced non-null outputs, on a sample, before writing
+    anything.
+    """
+
+    column: str          # the produced column
+    source: str          # the input column it claims to be a parse of
+    min_success: float = 0.5
+    hint: str = ""       # what to try instead, shown in the error
+
+
+@dataclass
 class SqlPlan:
     """What a ``pushdown`` transform returns: column expressions, not a query.
 
@@ -89,6 +110,8 @@ class SqlPlan:
     replace: dict[str, str] = field(default_factory=dict)  # existing column -> SQL expr
     drop: tuple[str, ...] = ()
     where: str | None = None
+    # Post-conditions the runtime enforces before writing. See ParseCheck.
+    checks: tuple[ParseCheck, ...] = ()
 
 
 @dataclass

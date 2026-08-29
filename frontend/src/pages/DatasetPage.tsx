@@ -16,6 +16,7 @@ import {
 } from '../api/hooks'
 import type {
   ColumnProfile,
+  FormatCandidate,
   PluginDescriptor,
   RelatedDataset,
   Suggestion,
@@ -39,6 +40,11 @@ const MODE_HINT: Record<string, string> = {
   inspect: 'instant, read-only',
 }
 
+/** How profiling worked out this column reads, if it is temporal. */
+function dateFormats(column: ColumnProfile): FormatCandidate[] {
+  return column.candidates.find((c) => c.formats.length > 0)?.formats ?? []
+}
+
 function ColumnRow({
   column,
   semanticTypes,
@@ -56,6 +62,17 @@ function ColumnRow({
         <td className="px-3 py-1.5">
           <button type="button" onClick={() => setOpen((o) => !o)} className="text-left">
             <span className="font-medium text-slate-800">{column.name}</span>
+            {column.warning && (
+              // The importer made a choice the data could not settle. Marked on
+              // the row itself, because a warning only reachable by expanding
+              // the column is a warning nobody sees.
+              <span
+                className="ml-1.5 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-900"
+                title={column.warning}
+              >
+                check format
+              </span>
+            )}
           </button>
         </td>
         <td className="px-3 py-1.5 font-mono text-xs text-slate-500">{column.physical_type}</td>
@@ -103,12 +120,34 @@ function ColumnRow({
                 {s.sample_values.slice(0, 8).map(String).join(', ')}
               </code>
             </div>
+            {column.warning && (
+              <div className="mb-2 rounded border border-amber-200 bg-amber-50 p-2 text-amber-900">
+                {column.warning}
+              </div>
+            )}
             {column.candidates.length > 0 && (
               <div>
                 <span className="text-slate-500">detected:</span>{' '}
                 {column.candidates.map((c) => (
                   <span key={c.semantic_type} className="mr-2">
                     {c.semantic_type} ({Math.round(c.confidence * 100)}%) — {c.rationale}
+                  </span>
+                ))}
+              </div>
+            )}
+            {dateFormats(column).length > 0 && (
+              <div className="mt-1">
+                <span className="text-slate-500">reads as:</span>{' '}
+                {dateFormats(column).map((f) => (
+                  <span key={f.format} className="mr-2">
+                    <code className="font-mono">{f.format}</code> ({f.label}
+                    {f.success_rate < 1 ? `, ${Math.round(f.success_rate * 100)}%` : ''})
+                    {f.example_input && (
+                      <span className="text-slate-500">
+                        {' '}
+                        — {f.example_input} → {f.example_output}
+                      </span>
+                    )}
                   </span>
                 ))}
               </div>

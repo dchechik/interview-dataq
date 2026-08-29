@@ -13,8 +13,9 @@ from typing import Any, ClassVar
 import pyarrow as pa
 from pydantic import BaseModel, Field
 
+from ...core.datefmt import ambiguous
 from ..base import Accepts, ColumnParams, Produces, register
-from ..kinds import SqlPlan, Transform, TransformCtx
+from ..kinds import ParseCheck, SqlPlan, Transform, TransformCtx
 
 # --------------------------------------------------------------------------- #
 # pushdown: normalization
@@ -63,14 +64,38 @@ class NormalizeIp(Transform):
 
 class TimestampParams(ColumnParams):
     format: str | None = Field(
-        default=None, description="strptime format; auto-detected when omitted"
+        default=None,
+        description="strptime format, or epoch:s / epoch:ms / epoch:us. "
+                    "Taken from the detected format when omitted.",
     )
     suffix: str = "_ts"
 
 
+def _epoch_expr(col: str, unit: str) -> str:
+    return {
+        "s": f"to_timestamp(CAST({col} AS BIGINT))",
+        "ms": f"to_timestamp(CAST({col} AS BIGINT) / 1000.0)",
+        "us": f"to_timestamp(CAST({col} AS BIGINT) / 1000000.0)",
+    }[unit]
+
+
 @register
 class NormalizeTimestamp(Transform):
-    """Parse a text column into a real TIMESTAMP."""
+    """Parse a text column into a real TIMESTAMP.
+
+    The format is normally not supplied: profiling already worked out how the
+    column reads, so this takes the detected format rather than making the user
+    retype it. Two cases are deliberately not automated.
+
+    A column whose format is *ambiguous* -- 03/04/2016 being March or April
+    depending on a convention the file does not record -- is refused rather than
+    guessed at. Guessing here silently shifts up to twelve days of every date,
+    which no downstream check would catch because both readings are valid dates.
+
+    A column nothing recognises is attempted with try_cast anyway, on the chance
+    DuckDB's own parser does better than the format library; the parse check
+    catches it if not.
+    """
 
     id: ClassVar[str] = "normalize.timestamp"
     title: ClassVar[str] = "Parse timestamp"
@@ -82,12 +107,65 @@ class NormalizeTimestamp(Transform):
     def sql(self, ctx: TransformCtx) -> SqlPlan:
         p: TimestampParams = ctx.params
         col = ctx.col(p.column)
-        if p.format:
-            fmt = "'" + p.format.replace("'", "''") + "'"
-            expr = f"try_strptime(CAST({col} AS VARCHAR), {fmt})"
+        detected = self._detected_formats(ctx, p.column)
+
+        fmt = p.format
+        if fmt is None and detected:
+            if ambiguous(detected):
+                options = ", ".join(
+                    f"{c.format!r} ({c.label})" for c in detected if c.conflict
+                )
+                raise ValueError(
+                    f"{p.column} is a date column, but its format is ambiguous: "
+                    f"{detected[0].conflict}. Re-run with an explicit format -- "
+                    f"one of: {options}."
+                )
+            fmt = detected[0].format
+
+        if fmt and fmt.startswith("epoch:"):
+            expr = _epoch_expr(col, fmt.split(":", 1)[1])
+            how = fmt
+        elif fmt:
+            literal = "'" + fmt.replace("'", "''") + "'"
+            expr = f"try_strptime(CAST({col} AS VARCHAR), {literal})"
+            how = fmt
         else:
             expr = f"try_cast({col} AS TIMESTAMP)"
-        return SqlPlan(add={f"{p.column}{p.suffix}": expr})
+            how = "DuckDB's own parser"
+
+        out = f"{p.column}{p.suffix}"
+        source_type = (ctx.profile.column(p.column).physical_type
+                       if ctx.profile.column(p.column) else "")
+        return SqlPlan(
+            add={out: expr},
+            checks=(ParseCheck(column=out, source=p.column,
+                               hint=self._hint(how, detected, source_type)),),
+        )
+
+    @staticmethod
+    def _detected_formats(ctx: TransformCtx, column: str):
+        """Formats profiling found for this column, best first."""
+        prof = ctx.profile.column(column)
+        for guess in (prof.candidates if prof else []):
+            if guess.formats:
+                return guess.formats
+        return []
+
+    @staticmethod
+    def _hint(attempted: str, detected, source_type: str = "") -> str:
+        """What to try instead. The whole value of the check is in this string."""
+        if detected:
+            options = ", ".join(f"{c.format!r} ({c.label})" for c in detected[:3])
+            return (f"Parsed with {attempted}. Formats that fit the sampled "
+                    f"values: {options}.")
+        if source_type.upper().startswith(("DATE", "TIMESTAMP")):
+            # Explaining that no text format matches would send the user hunting
+            # for one. The column is already temporal; there is nothing to parse.
+            return (f"Parsed with {attempted}, but {source_type} columns are "
+                    "already temporal -- drop the `format`, or skip this "
+                    "transform entirely.")
+        return (f"Parsed with {attempted}, and no known date format matches this "
+                "column either. Pass an explicit `format` (strptime syntax).")
 
 
 class CountryParams(ColumnParams):
@@ -130,7 +208,17 @@ class NormalizeNumeric(Transform):
         p: NumericParams = ctx.params
         col = ctx.col(p.column)
         cleaned = f"regexp_replace(CAST({col} AS VARCHAR), '[^0-9eE+\\-.]', '', 'g')"
-        return SqlPlan(add={f"{p.column}{p.suffix}": f"try_cast({cleaned} AS DOUBLE)"})
+        out = f"{p.column}{p.suffix}"
+        return SqlPlan(
+            add={out: f"try_cast({cleaned} AS DOUBLE)"},
+            # try_cast answers failure with NULL like everything else here, so
+            # pointing this at a column of words yields a column of nothing.
+            checks=(ParseCheck(
+                column=out, source=p.column,
+                hint="Stripping currency symbols and separators still left "
+                     "something that is not a number.",
+            ),),
+        )
 
 
 # --------------------------------------------------------------------------- #

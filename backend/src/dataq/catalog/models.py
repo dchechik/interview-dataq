@@ -77,6 +77,9 @@ class ColumnRow(SQLModel, table=True):
     pinned: bool = False
     stats: dict = _json({})
     candidates: list = _json([])
+    # Something the reader decided that the data could not settle -- see
+    # ColumnProfile.warning.
+    warning: str | None = None
 
 
 class JobRow(SQLModel, table=True):
