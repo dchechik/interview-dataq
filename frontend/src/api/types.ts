@@ -138,6 +138,44 @@ export interface DatasetProfile {
   columns: ColumnProfile[]
 }
 
+export type TargetType =
+  | 'VARCHAR' | 'BIGINT' | 'DOUBLE' | 'BOOLEAN' | 'DATE' | 'TIMESTAMP'
+
+/** What to do with one column at import — the editable part of a proposal. */
+export interface ColumnPlan {
+  name: string
+  /** null means "leave it as the reader produced it". */
+  target_type?: TargetType | null
+  /** strptime format, or epoch:s / epoch:ms / epoch:us. */
+  format?: string | null
+  semantic_type?: string | null
+  role?: ColumnRole | null
+  /** Set when a person changed this from what was proposed. */
+  pinned?: boolean
+}
+
+export interface ColumnProposal {
+  name: string
+  /** What the reader would produce, untouched. */
+  source_type: string
+  proposed: ColumnPlan
+  sample_values: unknown[]
+  rationale: string
+  formats: FormatCandidate[]
+  /** Share of sampled values the proposed cast would keep. */
+  parse_rate: number | null
+  /** The data cannot settle this; a person must. */
+  decision_required: boolean
+  conflict: string | null
+}
+
+export interface ImportPlan {
+  reader: string
+  sampled_rows: number
+  columns: ColumnProposal[]
+  rows: unknown[][]
+}
+
 export interface BrowseEntry {
   name: string
   path: string

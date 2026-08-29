@@ -6,6 +6,7 @@ import type {
   DatasetProfile,
   DatasetSummary,
   DeleteResult,
+  ImportPlan,
   Job,
   LineageStep,
   OperationAccepted,
@@ -181,6 +182,9 @@ export const api = {
     // No Content-Type header: the browser must set the multipart boundary.
     return request<UploadResult>('/sources/upload', { method: 'POST', body: form })
   },
+  /** Propose how each column should be imported, with the evidence for it. */
+  planImport: (uri: string, params: Record<string, unknown> = {}) =>
+    post<ImportPlan>('/sources/plan', { uri, params }),
   preview: (uri: string, limit = 20) =>
     post<{ reader: string; columns: string[]; types: string[]; rows: unknown[][] }>(
       '/sources/preview',

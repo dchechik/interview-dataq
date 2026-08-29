@@ -33,6 +33,7 @@ from ..query.compiler import QueryError
 from ..query.spec import QueryResult, QuerySpec
 from ..services import browse as browse_service
 from ..services import datasets as dataset_service
+from ..services import import_plan
 from ..services import inspect as inspect_service
 from ..services import lineage as lineage_service
 from ..services.context import AppContext, build_context
@@ -204,6 +205,31 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - a flat route table
             raise HTTPException(400, f"{type(exc).__name__}: {exc}") from exc
         return {"reader": reader_cls.id, "columns": columns, "types": types,
                 "rows": [list(r) for r in rows]}
+
+    @app.post("/api/sources/plan")
+    def plan_import(req: PreviewRequest) -> dict:
+        """Propose how each column should be imported, with the evidence.
+
+        The preview a person confirms. It runs the same profiler the import
+        runs, so what it shows is what will happen rather than a second opinion.
+        """
+        ctx = context()
+        try:
+            browse_service.assert_readable_uri(req.uri, ctx.settings)
+        except browse_service.BrowseError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        reader_cls = (REGISTRY.require(req.plugin_id) if req.plugin_id
+                      else pick_reader(req.uri))
+        if reader_cls is None:
+            raise HTTPException(400, f"no reader can handle {req.uri!r}")
+        try:
+            with ctx.warehouse.cur() as conn:
+                plan = import_plan.build_plan(conn, reader_cls, req.uri, req.params)
+        except import_plan.PlanError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            raise HTTPException(400, f"{type(exc).__name__}: {exc}") from exc
+        return plan.model_dump()
 
     @app.get("/api/sources/browse")
     def browse(path: str | None = None, show_hidden: bool = False) -> dict:

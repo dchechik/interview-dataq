@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from ..core.profile import DatasetProfile
+from ..core.profile import ColumnProfile, DatasetProfile
 from ..jobs.context import JobCtx
 from ..jobs.executor import run_transform
 from ..plugins.base import REGISTRY
@@ -23,6 +23,13 @@ from ..query.spec import QuerySpec
 from ..storage.base import VersionRef
 from .browse import assert_readable_uri
 from .context import AppContext
+from .import_plan import (
+    ColumnPlan,
+    cast_expr,
+    cast_projection,
+    text_columns,
+    validate_plan,
+)
 from .model import make_model_client
 from .profiler import compute_stats, profile_columns, sniffer_ambiguities
 
@@ -123,14 +130,20 @@ def profile_and_store(
 
 
 def _sniffer_warnings(conn, reader_cls, uri: str, req_params: dict,
-                      columns: list[tuple[str, str]], job_ctx: JobCtx) -> dict[str, str]:
+                      columns: list[tuple[str, str]], job_ctx: JobCtx,
+                      skip: set[str] | None = None) -> dict[str, str]:
     """Check what the reader decided about ambiguous dates, while the text lasts.
 
     Only possible for readers that can hand back the unconverted text -- CSV,
     via all_varchar. For the rest there is nothing to compare against, and the
     empty dict says so honestly rather than implying the column was checked.
     """
-    temporal = [n for n, t in columns if t.upper().startswith(("DATE", "TIMESTAMP"))]
+    # A column whose format the import was told is not one the reader guessed
+    # at, so the warning -- which exists to report an unrecorded guess -- would
+    # be describing something that did not happen.
+    temporal = [n for n, t in columns
+                if t.upper().startswith(("DATE", "TIMESTAMP"))
+                and n not in (skip or set())]
     if not temporal or "all_varchar" not in reader_cls.Params.model_fields:
         return {}
     try:
@@ -145,6 +158,70 @@ def _sniffer_warnings(conn, reader_cls, uri: str, req_params: dict,
     for column, message in found.items():
         job_ctx.log(f"WARNING {column}: {message}")
     return found
+
+
+def _cast_losses(conn, view: str, plans: dict[str, ColumnPlan],
+                 columns: list[tuple[str, str]], job_ctx: JobCtx) -> dict[str, str]:
+    """Count the values a planned cast turns into NULL, before writing.
+
+    The cast is deliberately survivable -- try_cast and try_strptime answer a
+    value they cannot convert with NULL rather than ending the import, because
+    one 'n/a' in 850,000 rows should not cost the file. That makes the count the
+    only evidence anything was lost, so it is measured and attached to the
+    column rather than left for someone to notice.
+    """
+    measured: list[tuple[str, str]] = []
+    for name, source_type in columns:
+        plan = plans.get(name)
+        expr = cast_expr(name, plan, source_type) if plan else None
+        if expr is not None:
+            measured.append((name, expr))
+    if not measured:
+        return {}
+
+    parts = []
+    for i, (name, expr) in enumerate(measured):
+        col = quote_ident(name)
+        parts.append(f"count({col}) AS n{i}")
+        parts.append(f"count({expr}) AS ok{i}")
+    row = conn.execute(f"SELECT {', '.join(parts)} FROM {view}").fetchone()
+
+    out: dict[str, str] = {}
+    for i, (name, _) in enumerate(measured):
+        had, kept = int(row[i * 2] or 0), int(row[i * 2 + 1] or 0)
+        lost = had - kept
+        if not had:
+            continue
+        job_ctx.log(f"{name}: converted {kept:,} of {had:,} values")
+        if lost:
+            out[name] = (
+                f"{lost:,} of {had:,} values ({lost / had:.1%}) could not be read "
+                f"as {plans[name].target_type} and are empty. Everything else "
+                "converted; no rows were dropped."
+            )
+            job_ctx.log(f"WARNING {name}: {out[name]}")
+    return out
+
+
+def _planned_profiles(plans: list[ColumnPlan], columns: list[tuple[str, str]]) -> list:
+    """The columns a person actually overrode, as pinned profiles.
+
+    Only those: `profile_columns` treats a pin as final, and accepting a
+    proposal is not an override. Freezing every column would stop re-detection
+    on a dataset nobody had corrected, and would make the "pinned" marker in the
+    UI mean nothing.
+    """
+    typed = dict(columns)
+    out = []
+    for plan in plans:
+        if not plan.pinned or plan.name not in typed:
+            continue
+        out.append(ColumnProfile(
+            name=plan.name, physical_type=typed[plan.name],
+            semantic_type=plan.semantic_type, confidence=1.0,
+            role=plan.role or "dimension", pinned=True,
+        ))
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -163,21 +240,51 @@ def run_import(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
         raise TypeError(f"{reader_cls.id} is not a reader")
 
     reader: Reader = reader_cls()  # type: ignore[assignment]
-    params = reader_cls.parse_params(req.params)
+    # The column plan rides in params alongside the reader's own settings.
+    raw_params = {k: v for k, v in req.params.items() if k != "columns"}
+    plans = [ColumnPlan.model_validate(c) for c in req.params.get("columns", [])]
+    params = reader_cls.parse_params(raw_params)
     name = req.name or req.uri.rsplit("/", 1)[-1].split(".")[0] or "dataset"
 
     with ctx.warehouse.cur() as conn:
         job_ctx.log(f"reading {req.uri} with {reader_cls.id}")
         rel = reader.to_relation(conn, req.uri, params)
+        columns = list(zip(rel.columns, [str(t) for t in rel.types], strict=True))
+
+        by_name = {p.name: p for p in plans}
+        if plans:
+            validate_plan(plans, {n for n, _ in columns})
+            # A column whose reading is the user's to choose has to arrive
+            # unconverted: once the sniffer has turned 03/04/2016 into a DATE,
+            # which of March or April it picked cannot be recovered.
+            held = text_columns(by_name, columns)
+            if held:
+                job_ctx.log(f"reading {', '.join(held)} as text to apply the "
+                            "chosen format")
+                params = reader_cls.parse_params(
+                    {**raw_params, "column_types": {c: "VARCHAR" for c in held}})
+                rel = reader.to_relation(conn, req.uri, params)
+                columns = list(
+                    zip(rel.columns, [str(t) for t in rel.types], strict=True))
+
         view = f"_dq_import_{job_ctx.step_id}"
         rel.create_view(view, replace=True)
-        columns = list(zip(rel.columns, [str(t) for t in rel.types], strict=True))
+        projection = cast_projection(by_name, columns) if plans else "*"
+        cast_losses = _cast_losses(conn, view, by_name, columns, job_ctx)
 
         with _new_dataset(ctx, name=name, kind="source",
                           source_uri=req.uri) as dataset:
             ref = VersionRef(dataset_id=dataset.id, version=1)
             with ctx.warehouse.ddl_lock:
-                stored = ctx.storage.write_relation(ref, f"SELECT * FROM {view}", conn)
+                stored = ctx.storage.write_relation(
+                    ref, f"SELECT {projection} FROM {view}", conn)
+            # Re-derived from what was written, not from what was read: after a
+            # cast the physical type is the whole point, and the pre-cast list
+            # would record the type the plan set out to change.
+            written = conn.sql(
+                f"SELECT * FROM {ctx.storage.sql_source(stored)} LIMIT 0")
+            columns = list(
+                zip(written.columns, [str(t) for t in written.types], strict=True))
             job_ctx.rows_total = stored.rows
             job_ctx.progress(stored.rows, force=True)
 
@@ -188,10 +295,13 @@ def run_import(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
             )
             job_ctx.log(f"imported {stored.rows:,} rows into {name}; profiling")
             warnings = _sniffer_warnings(
-                conn, reader_cls, req.uri, req.params, columns, job_ctx)
+                conn, reader_cls, req.uri, raw_params, columns, job_ctx,
+                skip={p.name for p in plans if p.format})
+            warnings.update(cast_losses)
             profile_and_store(
                 ctx, conn, dataset.id, version.id, ctx.storage.sql_source(stored),
-                columns, warnings=warnings,
+                columns, previous=_planned_profiles(plans, columns),
+                warnings=warnings,
             )
         conn.execute(f"DROP VIEW IF EXISTS {view}")
 

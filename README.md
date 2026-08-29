@@ -100,6 +100,40 @@ which. Three things follow from that:
 - Numeric columns named like times are checked against the epoch ranges, so
   `event_time` as a BIGINT is recognised rather than averaged.
 
+### Import decides the types with you
+
+A column's physical type is settled by the reader the moment the file is read,
+copied into every record of the dataset, and can never be changed afterwards —
+storage is immutable per version, and the only escape is a transform that adds a
+second column beside it. Meaning and role, by contrast, are worked out later and
+stay editable forever. So the one decision that could not be revisited was the
+one nobody was shown, which is how a column of dates ends up stored as text.
+
+Importing now proposes a plan first: for each column, what the reader found,
+what it will be stored as, how a date will be read, its meaning and its role.
+The proposal comes from running the *real* profiler over a sample, so it shows
+what the import will do rather than a second opinion. The normal path is to look
+and press Import.
+
+Casting happens in the projection that materialises the version, not at read
+time, because at read time it cannot be survived: `types={'date':'TIMESTAMP'}`
+aborts the whole import on the first unparseable row — one `n/a` in 850,000 —
+and `ignore_errors` answers that by silently dropping rows, measured at 18 lost
+from 43. A projection cannot drop anything, so a value that will not convert
+becomes NULL, and the count is reported against the column.
+
+**Ambiguity is settled where it can be and asked where it cannot.** A prefix
+sample is a poor witness for day-first versus month-first: the first 2,000 rows
+of a time-sorted export can span a single day, in which every day is ≤ 12 and
+both readings fit. So when the sample cannot choose, the file is asked how often
+each reading actually fails — 109ms over 200,000 rows. Only a column where both
+readings survive that is put to the user, and then with a worked example rather
+than the word "ambiguous".
+
+A column whose reading is yours to choose is held back as text
+(`types={col: 'VARCHAR'}`), because once the sniffer has turned `03/04/2016` into
+a DATE, which of March or April it picked is unrecoverable.
+
 **Meaning is not storage.** A `VARCHAR` holding `03/07/2011 08:07:29` *means* a
 timestamp, and detection says so. It still cannot be a time axis: subtracting an
 interval from text is a type error. So a column's **role** reflects what it can

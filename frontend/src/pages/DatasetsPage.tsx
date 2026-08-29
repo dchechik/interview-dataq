@@ -1,155 +1,18 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 
-import { api, ApiError } from '../api/client'
-import { useDatasetTree, useDatasets, useOperation } from '../api/hooks'
+import { useDatasetTree, useDatasets } from '../api/hooks'
+import { ImportPanel } from '../components/ImportPanel'
 import { DatasetTree } from '../components/DatasetTree'
-import { FileBrowser } from '../components/FileBrowser'
-import { JobProgress } from '../components/JobProgress'
-
-interface Preview {
-  reader: string
-  columns: string[]
-  types: string[]
-  rows: unknown[][]
-}
 
 export function DatasetsPage() {
   const { data: datasets, isLoading } = useDatasets()
   const { data: tree } = useDatasetTree()
   const [view, setView] = useState<'tree' | 'grid'>('tree')
-  const operation = useOperation()
-  const [uri, setUri] = useState('')
-  const [name, setName] = useState('')
-  const [preview, setPreview] = useState<Preview | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [jobId, setJobId] = useState<string | null>(null)
-  const [browsing, setBrowsing] = useState(false)
-
-  async function doPreview(target = uri) {
-    setError(null)
-    setPreview(null)
-    try {
-      setPreview(await api.preview(target, 8))
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e))
-    }
-  }
-
-  /** Picking a file fills the path, names the dataset after it, and previews. */
-  function handlePicked(picked: string) {
-    setUri(picked)
-    if (!name) {
-      const base = picked.split('/').pop() ?? ''
-      setName(base.replace(/\.(gz)$/, '').replace(/\.[^.]+$/, ''))
-    }
-    doPreview(picked)
-  }
-
-  async function doImport() {
-    setError(null)
-    try {
-      const accepted = await operation.mutateAsync({ op: 'import', uri, name: name || undefined })
-      setJobId(accepted.job_id)
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e))
-    }
-  }
 
   return (
     <div className="space-y-6">
-      <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-base font-semibold text-slate-900">Import a dataset</h2>
-        <div className="flex flex-wrap gap-2">
-          <div className="flex min-w-96 flex-1 rounded border border-slate-300 focus-within:ring-1 focus-within:ring-slate-400">
-            <input
-              className="flex-1 rounded-l px-3 py-1.5 text-sm outline-none"
-              placeholder="Choose a file, or type a path or glob"
-              value={uri}
-              onChange={(e) => setUri(e.target.value)}
-            />
-            <button
-              type="button"
-              onClick={() => setBrowsing(true)}
-              className="rounded-r border-l border-slate-300 bg-slate-50 px-3 text-sm text-slate-700 hover:bg-slate-100"
-            >
-              Browse…
-            </button>
-          </div>
-          <input
-            className="w-48 rounded border border-slate-300 px-3 py-1.5 text-sm"
-            placeholder="name (optional)"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-          <button
-            type="button"
-            onClick={() => doPreview()}
-            disabled={!uri}
-            className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-40"
-          >
-            Preview
-          </button>
-          <button
-            type="button"
-            onClick={doImport}
-            disabled={!uri || operation.isPending}
-            className="rounded bg-slate-900 px-3 py-1.5 text-sm text-white hover:bg-slate-800 disabled:opacity-40"
-          >
-            Import
-          </button>
-        </div>
-
-        {error && (
-          <p className="mt-2 rounded bg-rose-50 p-2 text-sm text-rose-800">{error}</p>
-        )}
-
-        {preview && (
-          <div className="mt-3">
-            <p className="mb-1 text-xs text-slate-500">
-              Read by <code className="font-mono">{preview.reader}</code> ·{' '}
-              {preview.columns.length} columns
-            </p>
-            <div className="overflow-auto rounded border border-slate-200">
-              <table className="w-full text-xs">
-                <thead className="bg-slate-50">
-                  <tr>
-                    {preview.columns.map((c, i) => (
-                      <th key={c} className="px-2 py-1 text-left font-medium text-slate-700">
-                        {c}
-                        <span className="ml-1 font-mono font-normal text-slate-400">
-                          {preview.types[i]}
-                        </span>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {preview.rows.map((row, i) => (
-                    <tr key={i} className="border-t border-slate-100">
-                      {row.map((cell, j) => (
-                        <td key={j} className="px-2 py-1 font-mono text-slate-600">
-                          {cell === null ? '—' : String(cell)}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        <div className="mt-3">
-          <JobProgress jobId={jobId} />
-        </div>
-
-        <FileBrowser
-          open={browsing}
-          onClose={() => setBrowsing(false)}
-          onSelect={handlePicked}
-        />
-      </section>
+      <ImportPanel />
 
       <section>
         <div className="mb-3 flex items-center gap-3">

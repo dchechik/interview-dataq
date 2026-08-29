@@ -134,26 +134,37 @@ def profile_columns(
             prev = pinned[st.name]
             prof.semantic_type = prev.semantic_type
             prof.confidence = 1.0
-            prof.role = prev.role
+            prof.role = _storable_role(prev.role, st.physical_type)
             prof.pinned = True
         elif guesses and guesses[0].confidence >= CONFIDENCE_THRESHOLD:
             best = guesses[0]
             prof.semantic_type = best.semantic_type
             prof.confidence = best.confidence
             st_def = SEMANTIC_TYPES.get(best.semantic_type)
-            role = st_def.role if st_def else "dimension"
-            # A column's *meaning* can be temporal while its storage is not.
-            # Role answers "what can I do with this", so a text date is a
-            # dimension until it is parsed -- otherwise every time-based plugin
-            # picks it up and fails on VARCHAR - INTERVAL deep inside DuckDB.
-            # The semantic type is kept, which is what makes the fix suggestable.
-            if role == "time" and not is_temporal(st.physical_type):
-                role = "dimension"
-            prof.role = role
+            prof.role = _storable_role(
+                st_def.role if st_def else "dimension", st.physical_type)
         else:
             prof.role = _fallback_role(st)
         out.append(prof)
     return out
+
+
+def _storable_role(role: str, physical_type: str) -> str:
+    """A role the column can actually fulfil as stored.
+
+    A column's *meaning* can be temporal while its storage is not. Role answers
+    "what can I do with this", so a text date is a dimension until it is parsed
+    -- otherwise every time-based plugin picks it up and fails on
+    VARCHAR - INTERVAL deep inside DuckDB. The semantic type is kept, which is
+    what makes the fix suggestable.
+
+    Applied to pinned roles too. A pin is a person's judgement about meaning,
+    and deserves to win; it is not a licence to subtract an interval from a
+    string.
+    """
+    if role == "time" and not is_temporal(physical_type):
+        return "dimension"
+    return role
 
 
 def _fallback_role(st: ColumnStats) -> str:

@@ -45,14 +45,18 @@ function dateFormats(column: ColumnProfile): FormatCandidate[] {
   return column.candidates.find((c) => c.formats.length > 0)?.formats ?? []
 }
 
+const ROLES = ['dimension', 'measure', 'time', 'key', 'geo', 'ignore']
+
 function ColumnRow({
   column,
   semanticTypes,
   onPin,
+  onPinRole,
 }: {
   column: ColumnProfile
   semanticTypes: string[]
   onPin: (name: string, type: string) => void
+  onPinRole: (name: string, role: string) => void
 }) {
   const [open, setOpen] = useState(false)
   const s = column.stats
@@ -94,9 +98,20 @@ function ColumnRow({
           {column.pinned && <span className="ml-1 text-xs text-blue-600">pinned</span>}
         </td>
         <td className="px-3 py-1.5">
-          <span className={`rounded px-1.5 py-0.5 text-xs ${ROLE_COLORS[column.role]}`}>
-            {column.role}
-          </span>
+          {/* Editable because a role is a claim about what the column can do,
+              and detection can get it wrong. pinColumnType has always accepted
+              one; nothing ever sent it. */}
+          <select
+            value={column.role}
+            onChange={(e) => onPinRole(column.name, e.target.value)}
+            className={`rounded border-0 px-1.5 py-0.5 text-xs ${ROLE_COLORS[column.role]}`}
+          >
+            {ROLES.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
         </td>
         <td className="px-3 py-1.5 text-right font-mono text-xs text-slate-500">
           {s ? s.distinct_count.toLocaleString() : '—'}
@@ -501,6 +516,13 @@ export function DatasetPage() {
     qc.invalidateQueries({ queryKey: keys.suggestions(id) })
   }
 
+  async function pinRole(column: string, role: string) {
+    const current = profile?.columns.find((c) => c.name === column)
+    await api.pinColumnType(id, column, current?.semantic_type ?? null, role)
+    qc.invalidateQueries({ queryKey: keys.profile(id) })
+    qc.invalidateQueries({ queryKey: keys.suggestions(id) })
+  }
+
   if (!profile) return <p className="text-sm text-slate-500">Loading…</p>
 
   return (
@@ -585,6 +607,7 @@ export function DatasetPage() {
                     column={c}
                     semanticTypes={semanticTypes}
                     onPin={pin}
+                    onPinRole={pinRole}
                   />
                 ))}
               </tbody>

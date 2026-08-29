@@ -39,6 +39,15 @@ class CsvParams(BaseModel):
     timestampformat: str | None = Field(
         default=None, description="strptime format for TIMESTAMP columns"
     )
+    # Per-column type overrides. Used to hold a column back as text so the
+    # import can apply a chosen reading: once the sniffer has turned 03/04/2016
+    # into a DATE, which reading it took is unrecoverable. Forcing *to* VARCHAR
+    # is the safe direction -- no value fails to become text -- whereas forcing
+    # to a real type aborts the whole read on the first row that will not
+    # convert. Casting to real types happens after the read, in the projection.
+    column_types: dict[str, str] = Field(
+        default_factory=dict, description="Column name -> type to read it as"
+    )
 
 
 @register
@@ -65,6 +74,10 @@ class CsvReader(Reader):
             opts.append(f"dateformat={_lit(params.dateformat)}")
         if params.timestampformat:
             opts.append(f"timestampformat={_lit(params.timestampformat)}")
+        if params.column_types:
+            pairs = ", ".join(f"{_lit(name)}: {_lit(kind)}"
+                              for name, kind in params.column_types.items())
+            opts.append(f"types={{{pairs}}}")
         return conn.sql(f"SELECT * FROM read_csv({_lit(uri)}, {', '.join(opts)})")
 
 

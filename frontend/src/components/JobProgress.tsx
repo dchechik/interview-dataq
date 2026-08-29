@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react'
+
 import { api } from '../api/client'
 import { useJobWatcher } from '../api/hooks'
 import type { Job } from '../api/types'
@@ -30,13 +32,22 @@ export function JobProgress({
   onDone?: (job: Job) => void
 }) {
   const job = useJobWatcher(jobId)
+  // Called from an effect, and only once: as a bare expression in the render
+  // body this fired on every render for as long as the job stayed succeeded,
+  // so an onDone that navigates or sets state ran repeatedly.
+  const announced = useRef<string | null>(null)
+  useEffect(() => {
+    if (!job || job.status !== 'succeeded' || !onDone) return
+    if (announced.current === job.id) return
+    announced.current = job.id
+    onDone(job)
+  }, [job, onDone])
+
   if (!jobId || !job) return null
 
   const p = job.progress ?? {}
   const pct = p.pct ?? (job.status === 'succeeded' ? 100 : 0)
   const cost = p.cost
-
-  if (job.status === 'succeeded' && onDone) onDone(job)
 
   return (
     <div className="rounded border border-slate-200 bg-white p-3 text-sm">
