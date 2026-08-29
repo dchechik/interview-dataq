@@ -144,5 +144,8 @@ class TopKAggregate(Aggregator):
                 select=select,
                 order_by=[Sort(column=order, desc=True)],
                 limit=p.k,
-            )
+            ),
+            # Exactly K rows is what was asked for, so stopping at K is not
+            # truncation.
+            limited_on_purpose=True,
         )

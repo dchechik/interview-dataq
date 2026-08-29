@@ -167,6 +167,26 @@ is the feature table, and Chalk's `Windowed` is the `over 1d,7d,30d` fan-out. Th
 serving half of those systems is deliberately absent: features here are columns
 on a dataset, not a serving surface.
 
+### Deleting a dataset
+
+`DELETE /api/datasets/{id}`, or the button on the dataset page. Three things it
+does that the obvious implementation does not:
+
+- **Frees the disk.** The catalog only knows about rows; the parquet parts live
+  behind the storage backend. Deleting the metadata and leaving the bytes is how
+  a lake grows forever while the dataset list says nothing is there.
+- **Refuses to strand a derivation tree.** An aggregate built from a dataset
+  stays valid after its parent goes, but its provenance does not — so a parent
+  with children returns 409 naming them, and `?cascade=true` removes the subtree.
+  The UI asks first, listing what would go.
+- **Refuses to race a job.** Deleting under a live writer leaves a version row
+  pointing at files that no longer exist.
+
+Relatedly, a *failed* operation now leaves the catalog as it found it. The
+dataset row is created before the work that fills it, so anything failing in
+between used to leave a ghost: listed in the UI, zero rows, unqueryable,
+unexplainable.
+
 ### Importing without typing a path
 
 DuckDB reads data files **in place**, so the import box needs a path the *server*

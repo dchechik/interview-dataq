@@ -32,6 +32,7 @@ from ..plugins.builtin.readers import pick_reader
 from ..query.compiler import QueryError
 from ..query.spec import QueryResult, QuerySpec
 from ..services import browse as browse_service
+from ..services import datasets as dataset_service
 from ..services import inspect as inspect_service
 from ..services import lineage as lineage_service
 from ..services.context import AppContext, build_context
@@ -288,9 +289,38 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - a flat route table
         return _summary(ctx, ds)
 
     @app.delete("/api/datasets/{dataset_id}")
-    def delete_dataset(dataset_id: str) -> dict:
-        context().catalog.delete_dataset(dataset_id)
-        return {"deleted": dataset_id}
+    def delete_dataset(dataset_id: str, cascade: bool = False) -> dict:
+        """Delete a dataset, its versions, and the stored bytes behind them.
+
+        Refuses rather than stranding anything: 409 when other datasets are
+        derived from this one (unless ``cascade``), or when a job is still
+        writing to it.
+        """
+        try:
+            result = dataset_service.delete_dataset(context(), dataset_id, cascade)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except dataset_service.DeleteRefused as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {
+            "deleted": result.ids,
+            "datasets": result.datasets,
+            "versions": result.versions,
+            "bytes_freed": result.bytes_freed,
+        }
+
+    @app.get("/api/datasets/{dataset_id}/dependents")
+    def dataset_dependents(dataset_id: str) -> list[dict]:
+        """What a delete would take with it. The UI asks before confirming."""
+        ctx = context()
+        if ctx.catalog.get_dataset(dataset_id) is None:
+            raise HTTPException(404, "dataset not found")
+        out = []
+        for child in dataset_service.descendants(ctx, dataset_id):
+            row = ctx.catalog.get_dataset(child)
+            if row is not None:
+                out.append({"id": row.id, "name": row.name, "kind": row.kind})
+        return out
 
     @app.get("/api/datasets/{dataset_id}/versions")
     def list_versions(dataset_id: str) -> list[dict]:

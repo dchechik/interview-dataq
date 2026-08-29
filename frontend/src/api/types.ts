@@ -74,6 +74,14 @@ export interface RelatedDataset {
   row_count?: number
 }
 
+/** What a delete actually removed. */
+export interface DeleteResult {
+  deleted: string[]
+  datasets: { id: string; name: string; kind: string }[]
+  versions: number
+  bytes_freed: number
+}
+
 export interface Related {
   parents: RelatedDataset[]
   children: RelatedDataset[]

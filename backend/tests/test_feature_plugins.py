@@ -474,3 +474,15 @@ def test_a_join_that_matches_nothing_is_refused(app_ctx, run_op, events, tmp_pat
                               "prefix": "o_"})
     assert job.status == "failed"
     assert "none of" in job.error and "found a match" in job.error
+
+
+def test_top_k_is_allowed_to_return_exactly_k(app_ctx, run_op, events):
+    """The truncation guard must not fire where the limit is the feature.
+
+    agg.topk with k=5 returns five rows because five were asked for; treating
+    that as a truncated result makes the plugin unusable.
+    """
+    table = run_op(op="aggregate", plugin_id="agg.topk",
+                   inputs=[{"dataset_id": events}],
+                   params={"dimension": "user", "k": 2}, output_name="top_users")
+    assert app_ctx.catalog.get_profile(table).row_count == 2

@@ -113,4 +113,15 @@ class ParquetStorage(StorageBackend):
         return f"read_parquet({_sql_str(glob)})"
 
     def drop(self, stored: StoredRef, conn) -> None:
-        shutil.rmtree(stored.location, ignore_errors=True)
+        location = Path(stored.location)
+        shutil.rmtree(location, ignore_errors=True)
+        # A version lives at lake/<dataset>/v<n>, so removing the last one leaves
+        # an empty dataset directory behind. Harmless in bytes, but the lake
+        # then lists directories for datasets that no longer exist, which is
+        # exactly the confusion that makes leftover state hard to reason about.
+        parent = location.parent
+        try:
+            if parent.is_dir() and not any(parent.iterdir()):
+                parent.rmdir()
+        except OSError:
+            pass  # raced, or not ours to remove

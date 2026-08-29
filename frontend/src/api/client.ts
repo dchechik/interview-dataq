@@ -5,6 +5,7 @@ import type {
   DatasetNode,
   DatasetProfile,
   DatasetSummary,
+  DeleteResult,
   Job,
   LineageStep,
   OperationAccepted,
@@ -144,7 +145,12 @@ export const api = {
   datasetTree: () => request<DatasetNode[]>('/datasets/tree'),
   related: (id: string) => request<Related>(`/datasets/${id}/related`),
   dataset: (id: string) => request<DatasetSummary>(`/datasets/${id}`),
-  deleteDataset: (id: string) => request<{ deleted: string }>(`/datasets/${id}`, { method: 'DELETE' }),
+  deleteDataset: (id: string, cascade = false) =>
+    request<DeleteResult>(`/datasets/${id}${cascade ? '?cascade=true' : ''}`, {
+      method: 'DELETE',
+    }),
+  dependents: (id: string) =>
+    request<{ id: string; name: string; kind: string }[]>(`/datasets/${id}/dependents`),
   profile: (id: string, version?: number) =>
     request<DatasetProfile>(`/datasets/${id}/profile${version ? `?version=${version}` : ''}`),
   versions: (id: string) =>

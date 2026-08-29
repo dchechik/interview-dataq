@@ -81,7 +81,8 @@ class DuckPartWriter(PartWriter):
         rows = self.conn.execute(
             f"SELECT count(*) FROM {quote_ident(self.table)}"
         ).fetchone()[0]
-        return StoredRef(backend="duckdb", location=self.table, parts=1, rows=int(rows))
+        return StoredRef(backend="duckdb", location=self.table, parts=1,
+                         rows=int(rows), bytes=_table_bytes(self.conn, self.table))
 
     def abort(self) -> None:
         """Discard in-flight work only -- committed parts must survive.
@@ -91,6 +92,24 @@ class DuckPartWriter(PartWriter):
         here would silently destroy the checkpoints that make resume possible.
         """
         return
+
+
+def _table_bytes(conn, table: str) -> int:
+    """Size on disk, so a delete can report what it actually freed.
+
+    DuckDB's own estimate rather than a measurement: the tables live inside one
+    file, so there is nothing to stat. It is an estimate, but "freed 0 bytes"
+    -- which is what the absence of this said -- is worse than an approximate
+    number.
+    """
+    try:
+        row = conn.execute(
+            "SELECT estimated_size FROM duckdb_tables() WHERE table_name = ?",
+            [table],
+        ).fetchone()
+    except Exception:  # noqa: BLE001 -- a reporting detail must never fail a write
+        return 0
+    return int(row[0] or 0) if row else 0
 
 
 def _arrow_to_duck(t: pa.DataType) -> str:
@@ -122,7 +141,8 @@ class DuckDBTableStorage(StorageBackend):
         conn.execute(f"DROP TABLE IF EXISTS {quote_ident(table)}")
         conn.execute(f"CREATE TABLE {quote_ident(table)} AS {rel_sql}", params or [])
         rows = conn.execute(f"SELECT count(*) FROM {quote_ident(table)}").fetchone()[0]
-        return StoredRef(backend="duckdb", location=table, parts=1, rows=int(rows))
+        return StoredRef(backend="duckdb", location=table, parts=1, rows=int(rows),
+                         bytes=_table_bytes(conn, table))
 
     def open_writer(self, ref: VersionRef, schema: pa.Schema, conn) -> PartWriter:
         return DuckPartWriter(conn, self._table(ref), schema)

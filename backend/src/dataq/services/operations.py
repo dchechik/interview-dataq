@@ -6,6 +6,7 @@ calls the same functions. Nothing here knows about HTTP.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -69,6 +70,24 @@ class DryRunResult(BaseModel):
     estimated_cost_usd: float | None = None
     estimated_seconds: float | None = None
     notes: list[str] = []
+
+
+@contextmanager
+def _new_dataset(ctx: AppContext, **fields):
+    """Create a dataset, and take it away again if filling it fails.
+
+    Everything between creating the row and adding its first version can fail --
+    the read, the write, a post-condition. A dataset row with no version is a
+    ghost: it lists in the UI, reports zero rows, cannot be queried, and cannot
+    be explained. Removing it means a failed operation leaves the catalog as it
+    found it.
+    """
+    dataset = ctx.catalog.create_dataset(**fields)
+    try:
+        yield dataset
+    except BaseException:
+        ctx.catalog.delete_dataset(dataset.id)
+        raise
 
 
 @dataclass
@@ -154,26 +173,26 @@ def run_import(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
         rel.create_view(view, replace=True)
         columns = list(zip(rel.columns, [str(t) for t in rel.types], strict=True))
 
-        dataset = ctx.catalog.create_dataset(
-            name=name, kind="source", source_uri=req.uri
-        )
-        ref = VersionRef(dataset_id=dataset.id, version=1)
-        with ctx.warehouse.ddl_lock:
-            stored = ctx.storage.write_relation(ref, f"SELECT * FROM {view}", conn)
-        job_ctx.rows_total = stored.rows
-        job_ctx.progress(stored.rows, force=True)
+        with _new_dataset(ctx, name=name, kind="source",
+                          source_uri=req.uri) as dataset:
+            ref = VersionRef(dataset_id=dataset.id, version=1)
+            with ctx.warehouse.ddl_lock:
+                stored = ctx.storage.write_relation(ref, f"SELECT * FROM {view}", conn)
+            job_ctx.rows_total = stored.rows
+            job_ctx.progress(stored.rows, force=True)
 
-        version = ctx.catalog.add_version(
-            dataset_id=dataset.id, version=1, stored=stored,
-            columns_schema=[{"name": n, "physical_type": t} for n, t in columns],
-            row_count=stored.rows, step_id=job_ctx.step_id,
-        )
-        job_ctx.log(f"imported {stored.rows:,} rows into {name}; profiling")
-        warnings = _sniffer_warnings(conn, reader_cls, req.uri, req.params, columns, job_ctx)
-        profile_and_store(
-            ctx, conn, dataset.id, version.id, ctx.storage.sql_source(stored), columns,
-            warnings=warnings,
-        )
+            version = ctx.catalog.add_version(
+                dataset_id=dataset.id, version=1, stored=stored,
+                columns_schema=[{"name": n, "physical_type": t} for n, t in columns],
+                row_count=stored.rows, step_id=job_ctx.step_id,
+            )
+            job_ctx.log(f"imported {stored.rows:,} rows into {name}; profiling")
+            warnings = _sniffer_warnings(
+                conn, reader_cls, req.uri, req.params, columns, job_ctx)
+            profile_and_store(
+                ctx, conn, dataset.id, version.id, ctx.storage.sql_source(stored),
+                columns, warnings=warnings,
+            )
         conn.execute(f"DROP VIEW IF EXISTS {view}")
 
     ctx.catalog.update_step(
@@ -286,37 +305,40 @@ def run_aggregate_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) ->
     base = src_name.name if src_name else "ds"
     out_name = req.output_name or f"{base}_{plugin_slug}"
 
-    dataset = ctx.catalog.create_dataset(
-        name=out_name, kind="aggregate",
+    with _new_dataset(
+        ctx, name=out_name, kind="aggregate",
         description=f"{title} over {src_name.name if src_name else inp.dataset_id}",
-    )
-    ref = VersionRef(dataset_id=dataset.id, version=1)
-    with ctx.warehouse.cur() as conn:
-        with ctx.warehouse.ddl_lock:
-            stored = ctx.storage.write_relation(ref, agg_sql, conn, compiled.params)
-        if plan.spec.limit is not None and stored.rows >= plan.spec.limit:
-            # The result stopped exactly on the limit, so it is almost certainly
-            # cut short. Left alone this is the worst kind of wrong: a complete
-            # -looking table that is missing rows, which then annotates only
-            # part of the data it is joined back to.
-            raise ValueError(
-                f"the aggregate produced {stored.rows:,} rows and hit its limit "
-                f"of {plan.spec.limit:,}, so it is truncated and incomplete. "
-                "Group by fewer columns, or use a coarser time grain."
+    ) as dataset:
+        ref = VersionRef(dataset_id=dataset.id, version=1)
+        with ctx.warehouse.cur() as conn:
+            with ctx.warehouse.ddl_lock:
+                stored = ctx.storage.write_relation(ref, agg_sql, conn, compiled.params)
+            if (plan.spec.limit is not None and not plan.limited_on_purpose
+                    and stored.rows >= plan.spec.limit):
+                # The result stopped exactly on the limit, so it is almost certainly
+                # cut short. Left alone this is the worst kind of wrong: a complete
+                # -looking table that is missing rows, which then annotates only
+                # part of the data it is joined back to.
+                with ctx.warehouse.ddl_lock:
+                    ctx.storage.drop(stored, conn)
+                raise ValueError(
+                    f"the aggregate produced {stored.rows:,} rows and hit its limit "
+                    f"of {plan.spec.limit:,}, so it is truncated and incomplete. "
+                    "Group by fewer columns, or use a coarser time grain."
+                )
+            source = ctx.storage.sql_source(stored)
+            rel = conn.sql(f"SELECT * FROM {source} LIMIT 0")
+            columns = list(zip(rel.columns, [str(t) for t in rel.types], strict=True))
+            version = ctx.catalog.add_version(
+                dataset_id=dataset.id, version=1, stored=stored,
+                columns_schema=[{"name": n, "physical_type": t} for n, t in columns],
+                row_count=stored.rows, step_id=job_ctx.step_id,
             )
-        source = ctx.storage.sql_source(stored)
-        rel = conn.sql(f"SELECT * FROM {source} LIMIT 0")
-        columns = list(zip(rel.columns, [str(t) for t in rel.types], strict=True))
-        version = ctx.catalog.add_version(
-            dataset_id=dataset.id, version=1, stored=stored,
-            columns_schema=[{"name": n, "physical_type": t} for n, t in columns],
-            row_count=stored.rows, step_id=job_ctx.step_id,
-        )
-        # Carry semantic types across from the source: a grouped country column is
-        # still a country, and that is what makes the result joinable.
-        inherited = [c for c in prepared.profile.columns if c.name in dict(columns)]
-        profile_and_store(ctx, conn, dataset.id, version.id, source, columns,
-                          previous=[c.model_copy(update={"pinned": True}) for c in inherited])
+            # Carry semantic types across from the source: a grouped country column is
+            # still a country, and that is what makes the result joinable.
+            inherited = [c for c in prepared.profile.columns if c.name in dict(columns)]
+            profile_and_store(ctx, conn, dataset.id, version.id, source, columns,
+                              previous=[c.model_copy(update={"pinned": True}) for c in inherited])
 
     job_ctx.rows_total = stored.rows
     job_ctx.progress(stored.rows, force=True)
@@ -373,29 +395,29 @@ def run_join_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
     rname = ctx.catalog.get_dataset(right.dataset_id)
     out_name = req.output_name or f"{lname.name if lname else 'l'}_x_{rname.name if rname else 'r'}"
 
-    dataset = ctx.catalog.create_dataset(
-        name=out_name, kind="join", view_sql=sql,
+    with _new_dataset(
+        ctx, name=out_name, kind="join", view_sql=sql,
         description=f"{p.how} join on {p.left_column} = {p.right_column}",
-    )
-    ref = VersionRef(dataset_id=dataset.id, version=1)
-    with ctx.warehouse.cur() as conn:
-        with ctx.warehouse.ddl_lock:
-            stored = ctx.storage.write_relation(ref, sql, conn)
-        source = ctx.storage.sql_source(stored)
-        rel = conn.sql(f"SELECT * FROM {source} LIMIT 0")
-        columns = list(zip(rel.columns, [str(t) for t in rel.types], strict=True))
-        version = ctx.catalog.add_version(
-            dataset_id=dataset.id, version=1, stored=stored,
-            columns_schema=[{"name": n, "physical_type": t} for n, t in columns],
-            row_count=stored.rows, step_id=job_ctx.step_id,
-        )
-        carried = {c.name: c for c in lprep.profile.columns}
-        for c in rprep.profile.columns:
-            carried.setdefault(prefix + c.name, c.model_copy(update={"name": prefix + c.name}))
-        previous = [c.model_copy(update={"pinned": True})
-                    for n, c in carried.items() if n in dict(columns)]
-        profile_and_store(ctx, conn, dataset.id, version.id, source, columns,
-                          previous=previous)
+    ) as dataset:
+        ref = VersionRef(dataset_id=dataset.id, version=1)
+        with ctx.warehouse.cur() as conn:
+            with ctx.warehouse.ddl_lock:
+                stored = ctx.storage.write_relation(ref, sql, conn)
+            source = ctx.storage.sql_source(stored)
+            rel = conn.sql(f"SELECT * FROM {source} LIMIT 0")
+            columns = list(zip(rel.columns, [str(t) for t in rel.types], strict=True))
+            version = ctx.catalog.add_version(
+                dataset_id=dataset.id, version=1, stored=stored,
+                columns_schema=[{"name": n, "physical_type": t} for n, t in columns],
+                row_count=stored.rows, step_id=job_ctx.step_id,
+            )
+            carried = {c.name: c for c in lprep.profile.columns}
+            for c in rprep.profile.columns:
+                carried.setdefault(prefix + c.name, c.model_copy(update={"name": prefix + c.name}))
+            previous = [c.model_copy(update={"pinned": True})
+                        for n, c in carried.items() if n in dict(columns)]
+            profile_and_store(ctx, conn, dataset.id, version.id, source, columns,
+                              previous=previous)
 
     job_ctx.rows_total = stored.rows
     job_ctx.progress(stored.rows, force=True)

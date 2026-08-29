@@ -239,6 +239,11 @@ class AggregatePlan:
 
     spec: QuerySpec
     derive: dict[str, str] = field(default_factory=dict)
+    # Set when the limit is the point rather than a safety cap -- top-K asks for
+    # exactly K rows, so hitting the limit is success, not truncation. Without
+    # the distinction the runtime cannot tell a deliberate K from a feature
+    # table that quietly stopped short.
+    limited_on_purpose: bool = False
 
 
 class Aggregator(Plugin, abc.ABC):

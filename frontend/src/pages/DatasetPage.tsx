@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import { api, ApiError } from '../api/client'
 import {
@@ -317,6 +317,122 @@ function SuggestionCard({
   )
 }
 
+/**
+ * Deleting a dataset, with its consequences shown before the button is armed.
+ *
+ * Deletion is the one action here that re-running a step cannot undo, so it is
+ * the one that has to say what it will do first: how many rows go, how much
+ * disk comes back, and -- the part that is easy to miss -- which other datasets
+ * were built from this one. The backend refuses to strand those, so the dialog
+ * asks rather than discovering it in an error.
+ */
+function DeleteDataset({
+  datasetId,
+  name,
+  rowCount,
+}: {
+  datasetId: string
+  name: string
+  rowCount: number
+}) {
+  const navigate = useNavigate()
+  const qc = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Only asked for once the dialog opens: there is no reason to walk the
+  // derivation tree of every dataset somebody merely looks at.
+  const { data: dependents } = useQuery({
+    queryKey: ['dependents', datasetId],
+    queryFn: () => api.dependents(datasetId),
+    enabled: open,
+  })
+
+  async function remove() {
+    setBusy(true)
+    setError(null)
+    try {
+      await api.deleteDataset(datasetId, Boolean(dependents?.length))
+      qc.invalidateQueries({ queryKey: keys.datasets })
+      qc.invalidateQueries({ queryKey: ['related'] })
+      navigate('/datasets')
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e))
+      setBusy(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="rounded border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700"
+      >
+        Delete
+      </button>
+    )
+  }
+
+  const alsoGoing = dependents ?? []
+  return (
+    // basis-full breaks it onto its own line: the header is a wrapping flex
+    // row, and left inline the panel squeezes the nav buttons into columns.
+    <div className="w-full basis-full rounded-lg border border-rose-200 bg-rose-50 p-3">
+      <p className="text-sm text-rose-900">
+        Delete <span className="font-medium">{name}</span> and its{' '}
+        {rowCount.toLocaleString()} rows? This cannot be undone.
+      </p>
+
+      {alsoGoing.length > 0 && (
+        <div className="mt-2 text-sm text-rose-900">
+          <p>
+            {alsoGoing.length} dataset{alsoGoing.length > 1 ? 's were' : ' was'} built
+            from this one and will be deleted too:
+          </p>
+          <ul className="mt-1 space-y-0.5">
+            {alsoGoing.map((d) => (
+              <li key={d.id} className="font-medium">
+                · {d.name}{' '}
+                <span className="font-normal text-rose-700">({d.kind})</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {error && <p className="mt-2 text-sm text-rose-800">{error}</p>}
+
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={remove}
+          disabled={busy}
+          className="rounded bg-rose-600 px-3 py-1.5 text-sm text-white hover:bg-rose-700 disabled:opacity-40"
+        >
+          {busy
+            ? 'Deleting…'
+            : alsoGoing.length
+              ? `Delete all ${alsoGoing.length + 1}`
+              : 'Delete'}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setOpen(false)
+            setError(null)
+          }}
+          disabled={busy}
+          className="rounded border border-rose-300 px-3 py-1.5 text-sm text-rose-800 hover:bg-rose-100"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function RelatedRow({
   item,
   direction,
@@ -436,6 +552,13 @@ export function DatasetPage() {
             Ask
           </Link>
         </div>
+        {/* Outside the button row, so the confirmation panel wraps onto its own
+            line instead of squeezing the nav links into columns. */}
+        <DeleteDataset
+          datasetId={id}
+          name={dataset?.name ?? id}
+          rowCount={profile.row_count}
+        />
       </div>
 
       <JobProgress jobId={jobId} />
