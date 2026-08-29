@@ -216,12 +216,26 @@ command run here targets that project. The link lives in your global
 fresh clone needs linking again. `railway status` shows what you are linked to;
 `railway link` connects to an existing project instead of creating a new one.
 
-**Deploy the code:**
+**Deploy the code — and only the code:**
 
 ```bash
 make railway-deploy    # == railway up
 make railway-logs      # tail the running service
 ```
+
+This never ships data, and there is no flag to make it. `.dockerignore` excludes
+`data/`, so the directory is not even uploaded as build context; and a Railway
+volume is not mounted during the build, so nothing could be written into the
+image anyway. A code deploy replaces the container and leaves the volume exactly
+as it was. Deploy as often as you like — your datasets do not move.
+
+Data travels only when you ask for it, through the `data-*` targets below. So
+the two cases you might want are:
+
+| I want to… | Run |
+|---|---|
+| Ship a code change, leave data alone | `make railway-deploy` |
+| Ship code *and* data | `make railway-deploy && make data-push` |
 
 The first deploy fails its healthcheck until you finish the setup below — the app
 refuses to start without an auth token, which is deliberate. Then, once, in the

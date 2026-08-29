@@ -39,6 +39,27 @@ make railway-deploy   # == railway up
 The first deploy will fail its healthcheck until you finish step 3 — the app
 refuses to start without an auth token. That is deliberate.
 
+**This is a code-only deploy, and it is the only kind there is.** Two separate
+things guarantee it: `.dockerignore` excludes `data/`, so the directory is never
+uploaded as build context; and the volume is not mounted during the build, so
+nothing could write datasets into the image even if it wanted to. A deploy
+swaps the container and leaves the volume untouched.
+
+Data moves only when you run a `data-*` target. So:
+
+| I want to… | Run |
+|---|---|
+| Ship a code change, leave data alone | `make railway-deploy` |
+| Ship code *and* data | `make railway-deploy && make data-push` |
+| Ship data only, no code change | `make data-push` |
+| Ship data, wiping what is there | `make data-replace` |
+
+The image declares no `VOLUME` for `/data`, deliberately: Railway rejects a
+Dockerfile that has one, because persistence there is a volume you attach to
+the service rather than something the image can request. The entrypoint creates
+the directory itself, so the path exists whether or not anything is mounted
+over it — which is also why the app runs fine locally with no volume at all.
+
 ### 2. Add the volume
 
 In the Railway dashboard, on the service: `⌘K` → **New Volume** (or right-click

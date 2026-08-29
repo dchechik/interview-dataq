@@ -5,11 +5,18 @@
 **/.pytest_cache
 **/.ruff_cache
 **/.mypy_cache
-data
-sample-data
 .git
-*.duckdb
-*.sqlite*
+
+# Runtime state, at any depth. The bare `data` / `*.sqlite*` these replace only
+# matched the context root, so backend/data -- 265 MB of local dev catalog and
+# parquet lake -- was being copied into every image by `COPY backend/`. It never
+# affected the running app (DATAQ_DATA_DIR points elsewhere), which is exactly
+# why it went unnoticed. Nothing tracked by git lives in a `data/` directory.
+data
+**/data
+sample-data
+**/*.duckdb
+**/*.sqlite*
 
 # Exported conversation transcripts: large, and possibly sensitive. `railway up`
 # uploads the build context, so keep them out of it.

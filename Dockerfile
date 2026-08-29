@@ -32,7 +32,14 @@ COPY --from=frontend /app/dist ./static
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-VOLUME ["/data"]
+# No VOLUME declaration for /data, deliberately. Railway rejects a Dockerfile
+# that has one -- persistence there is a Railway Volume attached to the service,
+# not something the image can ask for. It would earn nothing elsewhere either:
+# compose declares its own named volume and `docker run -v` overrides it, so all
+# a VOLUME line adds is an anonymous volume per container when you forget one.
+# The entrypoint creates $DATAQ_DATA_DIR itself, so the path exists regardless
+# of what is (or is not) mounted over it.
+
 # Documentation only: the process binds $PORT, which the platform injects.
 EXPOSE 8000
 
