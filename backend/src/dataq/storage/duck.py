@@ -152,3 +152,12 @@ class DuckDBTableStorage(StorageBackend):
 
     def drop(self, stored: StoredRef, conn) -> None:
         conn.execute(f"DROP TABLE IF EXISTS {quote_ident(stored.location)}")
+
+    def drop_dataset(self, dataset_id: str, conn) -> None:
+        # Dataset ids are hex, so they carry no LIKE wildcards of their own.
+        names = conn.execute(
+            "SELECT table_name FROM duckdb_tables() WHERE table_name LIKE ?",
+            [f"ds_{dataset_id}__v%"],
+        ).fetchall()
+        for (name,) in names:
+            conn.execute(f"DROP TABLE IF EXISTS {quote_ident(name)}")

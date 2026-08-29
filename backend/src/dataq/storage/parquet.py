@@ -112,6 +112,9 @@ class ParquetStorage(StorageBackend):
         glob = str(Path(stored.location) / "*.parquet")
         return f"read_parquet({_sql_str(glob)})"
 
+    def drop_dataset(self, dataset_id: str, conn) -> None:
+        shutil.rmtree(self.base / dataset_id, ignore_errors=True)
+
     def drop(self, stored: StoredRef, conn) -> None:
         location = Path(stored.location)
         shutil.rmtree(location, ignore_errors=True)

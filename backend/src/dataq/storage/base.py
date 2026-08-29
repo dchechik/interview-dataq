@@ -94,6 +94,17 @@ class StorageBackend(abc.ABC):
     @abc.abstractmethod
     def drop(self, stored: StoredRef, conn) -> None: ...
 
+    def drop_dataset(self, dataset_id: str, conn) -> None:
+        """Remove every version of a dataset, listed or not.
+
+        Deleting version by version trusts the catalog to know what exists, and
+        it does not always: a run that failed between writing files and
+        recording the version leaves data nothing points at. Dropping by
+        dataset id closes that gap, so deletion frees the disk rather than
+        usually freeing the disk.
+        """
+        return
+
 
 def batched(it: Iterator[pa.RecordBatch], n: int) -> Iterator[list[pa.RecordBatch]]:
     """Group record batches into chunks of at most ``n`` batches."""

@@ -271,3 +271,25 @@ def test_a_failed_import_leaves_no_phantom_dataset(app_ctx, tmp_path):
     app_ctx.runner.wait(accepted.job_id, timeout=60)
     assert app_ctx.catalog.get_job(accepted.job_id).status == "failed"
     assert {d.id for d in app_ctx.catalog.list_datasets()} == before
+
+
+def test_data_with_no_version_row_is_still_removed(app_ctx, auth):
+    """A run that wrote files but never recorded the version leaves data that
+    nothing points at. Deleting version-by-version would walk straight past it.
+    """
+    locations = stored_locations(app_ctx, auth)
+    # Forget the versions, keeping the dataset -- the shape a half-failed
+    # operation leaves behind.
+    from sqlmodel import Session, select
+
+    from dataq.catalog.models import VersionRow
+
+    with Session(app_ctx.catalog.engine) as s:
+        for v in s.exec(select(VersionRow).where(VersionRow.dataset_id == auth)):
+            s.delete(v)
+        s.commit()
+    assert app_ctx.catalog.list_versions(auth) == []
+    assert all(exists(app_ctx, loc) for loc in locations), "precondition: data remains"
+
+    delete_dataset(app_ctx, auth)
+    assert not any(exists(app_ctx, loc) for loc in locations)

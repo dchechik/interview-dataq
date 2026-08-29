@@ -140,6 +140,10 @@ def delete_dataset(ctx: AppContext, dataset_id: str, cascade: bool = False) -> D
                         f"could not remove the stored data for {row.name} "
                         f"v{version.version}: {exc}"
                     ) from exc
+            # Then everything else under that id, which catches data left by a
+            # run that wrote files but never recorded the version.
+            with ctx.warehouse.ddl_lock:
+                ctx.storage.drop_dataset(target, conn)
             ctx.catalog.delete_dataset(target)
             out.datasets.append({"id": target, "name": row.name, "kind": row.kind})
     return out
