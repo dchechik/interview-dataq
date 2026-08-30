@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 
-import { api } from './api/client'
+import { api, setToken, setUnauthenticatedHandler } from './api/client'
+import { Login } from './components/Login'
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   `rounded px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -10,6 +12,25 @@ const linkClass = ({ isActive }: { isActive: boolean }) =>
 
 export function App() {
   const { data: health } = useQuery({ queryKey: ['health'], queryFn: api.health })
+  // Set by the API client the first time a request comes back 401, which is
+  // also how an expired session surfaces: the next request fails and the screen
+  // comes back rather than the app silently showing nothing.
+  const [signedOut, setSignedOut] = useState(false)
+  useEffect(() => {
+    setUnauthenticatedHandler(() => setSignedOut(true))
+    return () => setUnauthenticatedHandler(null)
+  }, [])
+
+  // Only meaningful on an instance with auth configured; on a local one no
+  // request ever 401s and this never renders.
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: api.me,
+    retry: false,
+    staleTime: Infinity,
+  })
+
+  if (signedOut) return <Login />
 
   return (
     <div className="min-h-full bg-slate-50">
@@ -27,14 +48,30 @@ export function App() {
               Ask
             </NavLink>
           </nav>
-          <div className="ml-auto text-xs text-slate-500">
+          <div className="ml-auto flex items-center gap-3 text-xs text-slate-500">
             {health ? (
-              <>
+              <span>
                 storage <code className="font-mono text-slate-700">{health.storage}</code> ·{' '}
                 {health.plugins} plugins
-              </>
+              </span>
             ) : (
-              'connecting…'
+              <span>connecting…</span>
+            )}
+            {me?.username && (
+              <>
+                <span className="text-slate-400">·</span>
+                <span className="text-slate-600">{me.username}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setToken(null)
+                    window.location.reload()
+                  }}
+                  className="rounded border border-slate-300 px-2 py-0.5 hover:bg-slate-50"
+                >
+                  Sign out
+                </button>
+              </>
             )}
           </div>
         </div>

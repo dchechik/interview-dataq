@@ -24,13 +24,14 @@ import type {
 const BASE = '/api'
 
 /**
- * Shared-token auth for hosted instances.
+ * The credential every request carries.
  *
- * A local instance sets no token and none of this engages. A deployed one
- * returns 401 until a token is supplied; we prompt once, keep it per-browser,
- * and attach it to every request. Kept in localStorage rather than a cookie
- * because the token also has to travel as a query parameter for EventSource,
- * which cannot set headers.
+ * Normally a session token from signing in; a shared DATAQ_AUTH_TOKEN also
+ * works, which is what the deploy docs and any script use. A local instance
+ * configures neither and none of this engages.
+ *
+ * localStorage rather than a cookie because the credential also has to travel
+ * as a query parameter for EventSource, which cannot set headers.
  */
 const TOKEN_KEY = 'dataq.token'
 
@@ -58,21 +59,17 @@ export function withToken(url: string): string {
   return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
 }
 
-let promptInFlight = false
+/**
+ * Signalled when a request comes back 401, so the shell can show the sign-in
+ * screen. Previously this prompted for a server-side token — something only the
+ * person who deployed the instance could know, with no way to tell two people
+ * apart and no way to revoke one of them.
+ */
+type AuthListener = () => void
+let onUnauthenticated: AuthListener | null = null
 
-/** Ask once for the token, then reload so every query refetches with it. */
-function promptForToken(): void {
-  if (promptInFlight) return
-  promptInFlight = true
-  const entered = window.prompt(
-    'This DataQ instance requires an access token.\n\n' +
-      'It is the DATAQ_AUTH_TOKEN set on the server.',
-  )
-  promptInFlight = false
-  if (entered) {
-    setToken(entered.trim())
-    window.location.reload()
-  }
+export function setUnauthenticatedHandler(fn: AuthListener | null): void {
+  onUnauthenticated = fn
 }
 
 export class ApiError extends Error {
@@ -100,10 +97,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   })
-  if (res.status === 401) {
-    // Either no token yet, or the stored one is stale.
+  if (res.status === 401 && !path.startsWith('/auth/login')) {
+    // Either no session yet, or the stored one has expired. A failed login is
+    // exempt: that 401 is an answer, not a reason to tear down the screen
+    // showing it.
     setToken(null)
-    promptForToken()
+    onUnauthenticated?.()
     throw new ApiError('authentication required', 401)
   }
   if (!res.ok) {
@@ -182,6 +181,13 @@ export const api = {
     // No Content-Type header: the browser must set the multipart boundary.
     return request<UploadResult>('/sources/upload', { method: 'POST', body: form })
   },
+  login: (username: string, password: string) =>
+    post<{ token: string; username: string; expires_in_hours: number }>(
+      '/auth/login',
+      { username, password },
+    ),
+  me: () => request<{ username: string | null }>('/auth/me'),
+
   /** Propose how each column should be imported, with the evidence for it. */
   planImport: (uri: string, params: Record<string, unknown> = {}) =>
     post<ImportPlan>('/sources/plan', { uri, params }),

@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -39,6 +39,7 @@ from ..services import lineage as lineage_service
 from ..services.context import AppContext, build_context
 from ..services.operations import OperationAccepted, OperationRequest, submit_operation
 from ..services.query import run_query, run_sql
+from . import users
 from .auth import TokenAuthMiddleware, check_settings
 
 CTX: AppContext | None = None
@@ -71,8 +72,15 @@ def create_app(ctx: AppContext | None = None) -> FastAPI:
     settings = ctx.settings if ctx is not None else get_settings()
     # Refuse to start rather than serve an unprotected API on a public URL.
     check_settings(settings)
-    if settings.auth_token:
-        app.add_middleware(TokenAuthMiddleware, token=settings.auth_token)
+    # Auth engages when it is asked for -- a token, a user list, or the
+    # require_auth catch -- and not merely because a built-in account exists.
+    # A laptop instance nobody else can reach should not have a login screen,
+    # which is the property the shared-token design started with.
+    if settings.auth_token or settings.users or settings.require_auth:
+        app.add_middleware(
+            TokenAuthMiddleware, token=settings.auth_token,
+            secret=users.session_secret(settings.data_dir, settings.session_secret),
+        )
 
     app.add_middleware(
         CORSMiddleware,
@@ -98,6 +106,11 @@ class DatasetSummary(BaseModel):
     latest_version: int
     row_count: int = 0
     created_at: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 class SqlRequest(BaseModel):
@@ -407,6 +420,29 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - a flat route table
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc
         return [s.model_dump() for s in found]
+
+    # --- auth ------------------------------------------------------------
+    @app.post("/api/auth/login")
+    def login(req: LoginRequest) -> dict:
+        """Exchange a password for a session token.
+
+        One message for every failure, and the same work done whether or not
+        the username exists, so this cannot be used to enumerate accounts.
+        """
+        settings = context().settings
+        accounts = users.resolve_users(settings.users)
+        if not users.authenticate(req.username, req.password, accounts):
+            raise HTTPException(401, "wrong username or password")
+        secret = users.session_secret(settings.data_dir, settings.session_secret)
+        token = users.issue_session(req.username, secret, settings.session_hours)
+        return {"token": token, "username": req.username,
+                "expires_in_hours": settings.session_hours}
+
+    @app.get("/api/auth/me")
+    def whoami(request: Request) -> dict:
+        """Who the current credential belongs to. Also the "am I still logged
+        in" check the UI makes on load."""
+        return {"username": getattr(request.state, "user", None)}
 
     # --- operations ------------------------------------------------------
     @app.post("/api/operations", response_model=OperationAccepted, status_code=202)

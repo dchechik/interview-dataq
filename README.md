@@ -212,6 +212,36 @@ is the feature table, and Chalk's `Windowed` is the `over 1d,7d,30d` fan-out. Th
 serving half of those systems is deliberately absent: features here are columns
 on a dataset, not a serving surface.
 
+### Signing in
+
+A hosted instance requires a username and password. The built-in account is
+`dmitry`; its password was generated at setup and is not in the repository —
+only its scrypt hash is, in `backend/src/dataq/api/users.py`.
+
+```bash
+# Add or replace accounts without touching the code:
+cd backend && uv run python -m dataq.api.newuser alice
+# prints  alice:scrypt$...  — put it in DATAQ_USERS
+```
+
+`DATAQ_USERS` takes `name:hash` entries separated by commas or newlines, and
+*replaces* the built-in account rather than adding to it. Everyone signed in
+sees the same datasets; the point is to keep the instance off the public
+internet, not to model permissions.
+
+Signing in exchanges the password for a session token, signed with a key kept in
+the data directory so a restart or a redeploy does not sign everybody out.
+Sessions last two weeks by default (`DATAQ_SESSION_HOURS`).
+
+The older shared `DATAQ_AUTH_TOKEN` still works alongside accounts — that is
+what the deploy scripts and `curl` examples use. Either credential is accepted.
+
+**The built-in account does not satisfy `DATAQ_REQUIRE_AUTH`.** Its hash is
+committed, so every clone knows the account and shares its password; a
+deployment must set `DATAQ_USERS` or `DATAQ_AUTH_TOKEN` of its own, and the app
+refuses to start otherwise rather than going live on a credential that is not a
+secret.
+
 ### Deleting a dataset
 
 `DELETE /api/datasets/{id}`, or the button on the dataset page. Three things it

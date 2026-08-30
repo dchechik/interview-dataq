@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     # error rather than an oversight.
     auth_token: str | None = None
     require_auth: bool = False
+    # "name:hash" entries, comma or newline separated; see api/users.py. Unset
+    # means the built-in account.
+    users: str | None = None
+    # Signs session tokens. Unset means a key kept in the data directory, so
+    # sessions survive a restart without anything to configure.
+    session_secret: str | None = None
+    session_hours: int = 24 * 14
 
     # Agent / LLM plugins. Accepts the conventional bare ANTHROPIC_API_KEY as
     # well as the prefixed name -- the SDK reads the bare one, so only honouring
