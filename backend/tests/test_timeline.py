@@ -267,3 +267,33 @@ def test_replaying_the_suggestion_renders(app_ctx, annotated):
     assert out.spec.renderer == "timeline"
     assert out.row_count > 0
     assert out.spec.timeline.abnormality is not None
+
+
+def test_the_threshold_control_actually_moves_the_threshold(app_ctx, annotated):
+    """An explicit value used to be honoured only if the column was named too.
+
+    The UI's threshold input sends the value alone, so dragging it did nothing
+    at all -- which is worse than having no control, because it looks like an
+    answer to the question it silently ignores.
+    """
+    default = render_viz(app_ctx, "viz.timeline", annotated, BASE).spec.timeline
+    assert default.abnormality.value == 0.01
+
+    loosened = render_viz(app_ctx, "viz.timeline", annotated,
+                          {**BASE, "abnormality_value": 0.05}).spec.timeline
+    assert loosened.abnormality.value == 0.05
+    assert loosened.abnormality.column == default.abnormality.column
+    assert loosened.abnormality.op == default.abnormality.op
+    # And the explanation moves with it, rather than still claiming 1%.
+    assert "5%" in loosened.abnormality.rationale
+
+
+def test_a_looser_threshold_flags_more_events(app_ctx, annotated):
+    """The check that matters: the number highlighted actually changes."""
+    def flagged(value):
+        out = render_viz(app_ctx, "viz.timeline", annotated,
+                         {**BASE, "limit": 5000, "abnormality_value": value})
+        rule = out.spec.timeline.abnormality
+        return sum(1 for r in out.data if r[rule.column] < rule.value)
+
+    assert flagged(0.5) > flagged(0.01)

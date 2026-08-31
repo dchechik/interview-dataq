@@ -80,8 +80,12 @@ export function TimelinePage() {
     )
   }
 
-  const subjects = (profile?.columns ?? [])
-    .filter((c) => c.role !== 'time' && c.role !== 'measure')
+  // Every column, not just the subject-shaped ones. Narrowing to "who" is the
+  // common case, but a computed feature is a measure -- and "first time this
+  // recipient saw this country" is exactly the sort of thing you filter a
+  // timeline down to, so excluding measures put that out of reach.
+  const filterable = (profile?.columns ?? [])
+    .filter((c) => c.role !== 'time')
     .map((c) => c.name)
 
   return (
@@ -150,7 +154,7 @@ export function TimelinePage() {
 
             <button
               type="button"
-              onClick={() => setPinned((c) => [...c, { column: subjects[0] ?? '', value: '' }])}
+              onClick={() => setPinned((c) => [...c, { column: filterable[0] ?? '', value: '' }])}
               className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
             >
               + filter
@@ -168,7 +172,7 @@ export function TimelinePage() {
                 }
                 className="rounded border border-slate-300 px-2 py-1 text-sm"
               >
-                {subjects.map((c) => (
+                {filterable.map((c) => (
                   <option key={c}>{c}</option>
                 ))}
               </select>

@@ -76,7 +76,9 @@ class TimelineParams(BaseModel):
     )
     abnormality_op: str = "<"
     abnormality_value: float | None = None
-    abnormality_label: str = "unusual"
+    # None so an inferred rule can keep its own wording ("rare") while an
+    # explicit one still defaults to something neutral.
+    abnormality_label: str | None = None
     descending: bool = Field(default=True, description="Newest first")
     limit: int = Field(default=DEFAULT_LIMIT, ge=1, le=5_000)
 
@@ -135,19 +137,24 @@ class Timeline(Visualizer):
                 column=p.abnormality_column,
                 op=p.abnormality_op,  # type: ignore[arg-type]
                 value=p.abnormality_value if p.abnormality_value is not None else 0.01,
-                label=p.abnormality_label,
+                label=p.abnormality_label or "unusual",
             )
         for column in _rarity_columns(ctx.profile):
             # Share counts down and rarity counts up, so the comparison flips.
-            if SEMANTIC_TYPES.is_a(column.semantic_type or "", "numeric.rarity") \
-                    or column.name == "rarity":
-                return AbnormalityRule(
-                    column=column.name, op=">", value=0.99, label="rare",
-                    rationale="fewer than 1% of rows share this value",
-                )
+            inverted = (SEMANTIC_TYPES.is_a(column.semantic_type or "", "numeric.rarity")
+                        or column.name == "rarity")
+            default = 0.99 if inverted else 0.01
+            # An explicit threshold is honoured even when the column was
+            # inferred. Requiring the caller to name the column as well made the
+            # UI's threshold control silently do nothing, which is worse than
+            # not having one: it looks like an answer.
+            value = p.abnormality_value if p.abnormality_value is not None else default
+            share = (1 - value) if inverted else value
             return AbnormalityRule(
-                column=column.name, op="<", value=0.01, label="rare",
-                rationale=f"fewer than 1% of rows share this {column.name}",
+                column=column.name, op=">" if inverted else "<", value=value,
+                label=p.abnormality_label or "rare",
+                rationale=f"fewer than {share:.3%} of rows share this {column.name}"
+                          .replace(".000%", "%"),
             )
         return None
 
