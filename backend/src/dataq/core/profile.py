@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from pydantic import BaseModel
@@ -120,6 +121,31 @@ ENTITY_TYPES: tuple[str, ...] = ("net.ip", "identity.email", "identity.key",
 # event_id, both of which are identity types.
 ENTITY_MAX_DISTINCT_FRAC = 0.9
 
+# Words that name an actor. Statistics cannot separate two columns that both
+# have a thousand values and a few thousand events each -- `user` and `pc` in a
+# browsing log differ by nine percent, which is noise -- and the name is the only
+# remaining evidence. Applied as a nudge, not an override, so a column that is
+# genuinely a better fit still wins on the numbers. The detectors already lean on
+# names this way for IP and lat/lng columns.
+ACTOR_WORDS: frozenset[str] = frozenset((
+    "user", "users", "username", "userid", "account", "actor", "owner",
+    "employee", "member", "customer", "client", "person", "staff",
+    "principal", "recipient", "sender",
+))
+ACTOR_NAME_BOOST = 1.5
+
+
+def _named_like_an_actor(name: str) -> bool:
+    """Whether any word in the name is one people give to actors.
+
+    Word-wise rather than substring, so `subscriber_count` does not read as a
+    subscriber. It still says yes to `user_agent`, which is a browser -- but a
+    browser column has few distinct values and therefore a low score to begin
+    with, and a 1.5x nudge does not rescue it past a real user column.
+    """
+    return any(part in ACTOR_WORDS
+               for part in re.split(r"[^a-z0-9]+", name.lower()))
+
 
 def is_entity(column: ColumnProfile, types: tuple[str, ...] = ENTITY_TYPES) -> bool:
     """Is this a thing you would group behaviour by?"""
@@ -169,7 +195,10 @@ def entity_columns(profile: DatasetProfile,
         if not distinct:
             return None
         per_value = stats.row_count / distinct
-        return -min(distinct, per_value)
+        score = min(distinct, per_value)
+        if _named_like_an_actor(c.name):
+            score *= ACTOR_NAME_BOOST
+        return -score
 
     scored = [(r, c) for c in profile.columns if (r := rank(c)) is not None]
     return [c for _, c in sorted(scored, key=lambda pair: pair[0])]

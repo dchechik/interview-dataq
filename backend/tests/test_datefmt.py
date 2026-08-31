@@ -373,7 +373,7 @@ def test_an_existing_catalog_gains_new_columns(tmp_path):
     from dataq.catalog.repo import make_engine
     from dataq.config import Settings
 
-    settings = Settings(data_dir=tmp_path / "data", browse_roots=str(tmp_path))
+    settings = Settings(_env_file=None, data_dir=tmp_path / "data", browse_roots=str(tmp_path))
     engine = make_engine(settings)
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE columns DROP COLUMN warning"))

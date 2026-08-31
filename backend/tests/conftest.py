@@ -15,10 +15,20 @@ def storage_mode(request) -> str:
 
 @pytest.fixture
 def settings(tmp_path, storage_mode) -> Settings:
-    # browse_roots is explicit because imports are confined to it: a test that
-    # reads a fixture file has to declare where those files live, exactly as a
-    # deployment does.
+    """A deployment-shaped config, isolated from the developer's own.
+
+    ``_env_file=None`` matters: Settings reads ``.env`` by default, so a
+    developer who configures DATAQ_USERS or an API key on their own machine
+    would otherwise change what the tests exercise. Sixty-one of them started
+    returning 401 the moment one was set, which is a test suite reporting on the
+    wrong thing.
+
+    browse_roots is explicit because imports are confined to it: a test that
+    reads a fixture file has to declare where those files live, exactly as a
+    deployment does.
+    """
     return Settings(
+        _env_file=None,
         data_dir=tmp_path / "data",
         storage=storage_mode,
         duckdb_threads=2,

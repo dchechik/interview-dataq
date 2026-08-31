@@ -46,11 +46,11 @@ def test_the_built_in_account_does_not_satisfy_require_auth(tmp_path):
     from dataq.config import Settings
 
     with pytest.raises(MisconfiguredAuth, match="not a secret"):
-        check_settings(Settings(data_dir=tmp_path, require_auth=True,
+        check_settings(Settings(_env_file=None, data_dir=tmp_path, require_auth=True,
                                 browse_roots=str(tmp_path)))
 
     # An explicit user list does satisfy it.
-    check_settings(Settings(data_dir=tmp_path, require_auth=True,
+    check_settings(Settings(_env_file=None, data_dir=tmp_path, require_auth=True,
                             users="alice:scrypt$abc$def", browse_roots=str(tmp_path)))
 
 
@@ -280,7 +280,7 @@ def accounts(tmp_path):
     from dataq.api.users import hash_password
     from dataq.config import Settings
 
-    return Settings(data_dir=tmp_path / "data", browse_roots=str(tmp_path),
+    return Settings(_env_file=None, data_dir=tmp_path / "data", browse_roots=str(tmp_path),
                     users=f"alice:{hash_password('open sesame')}")
 
 

@@ -31,12 +31,17 @@ from ..core import features as F
 from ..core.profile import ColumnProfile, DatasetProfile, entity_columns
 from ..core.semantic import SEMANTIC_TYPES
 
-# A categorical column worth asking about. Above this many distinct values it is
-# closer to an identifier than a category, and "how often does this user see
-# this value" stops having repeat observations to average over.
-MAX_CATEGORY_DISTINCT = 500
-# And below this it is a flag, where per-actor frequency says little.
+# What makes a column worth asking "how often does this actor see this value" is
+# not how many values there are but whether they *recur*. An absolute cap gets
+# that wrong in both directions: it drops a URL column with 110,000 addresses
+# that each appear thirty times -- a perfectly good question -- while keeping a
+# 400-value column in a 500-row table where nothing repeats at all.
+MIN_CATEGORY_REPEATS = 3
+# Below this it is a flag, where per-actor frequency says little.
 MIN_CATEGORY_DISTINCT = 2
+# And a column with a value per row is an identifier, not a category: its share
+# is 1/N everywhere and nobody has ever seen the same one twice.
+MAX_CATEGORY_UNIQUENESS = 0.9
 
 # How many of each kind to propose. The point is a starting draft, not a
 # complete one: a dozen expressions is already more than most people will keep,
@@ -85,14 +90,21 @@ def _categoricals(profile: DatasetProfile, actor: str) -> list[ColumnProfile]:
     """Columns whose *value* is worth asking about, least varied first.
 
     Ordered the opposite way to actors: a country with seven values makes a
-    better "how common is this" question than a subject line with hundreds.
+    more legible "how common is this" question than a URL with a hundred
+    thousand, so it is offered first -- but both are offered.
     """
     out = []
     for c in profile.columns:
         if c.name == actor or c.role in ("time", "measure", "ignore"):
             continue
-        distinct = c.stats.distinct_count if c.stats else 0
-        if not (MIN_CATEGORY_DISTINCT <= distinct <= MAX_CATEGORY_DISTINCT):
+        stats = c.stats
+        if stats is None or not stats.distinct_count:
+            continue
+        if stats.distinct_count < MIN_CATEGORY_DISTINCT:
+            continue
+        if stats.distinct_frac >= MAX_CATEGORY_UNIQUENESS:
+            continue
+        if stats.row_count / stats.distinct_count < MIN_CATEGORY_REPEATS:
             continue
         out.append(c)
     return sorted(out, key=lambda c: (c.stats.distinct_count if c.stats else 0))
@@ -192,7 +204,9 @@ def propose(profile: DatasetProfile, actor: str | None = None,
     proposal.distinct_windows = F.distinct_windows(parsed, proposal.time_column)
     if not features:
         proposal.blocked = (
-            f"Nothing to summarise beside {chosen}: this table has no repeated "
-            "category and no numeric column to rank."
+            f"Nothing to summarise beside {chosen}. A column is worth asking "
+            "about when its values recur -- each one needs to show up a few "
+            "times, or there is no history to compare against -- and there is "
+            "no numeric column to rank either."
         )
     return proposal

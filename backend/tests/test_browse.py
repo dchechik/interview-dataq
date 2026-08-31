@@ -40,7 +40,7 @@ def tree(tmp_path):
 
 @pytest.fixture
 def browse_settings(tmp_path, tree):
-    return Settings(data_dir=tmp_path / "data", browse_roots=str(tree["root"]))
+    return Settings(_env_file=None, data_dir=tmp_path / "data", browse_roots=str(tree["root"]))
 
 
 def test_lists_directories_and_data_files(browse_settings, tree):
@@ -109,13 +109,13 @@ def test_a_file_path_resolves_to_its_directory(browse_settings, tree):
 
 def test_upload_dir_is_always_browsable(tmp_path, tree):
     """Otherwise an uploaded file could not be picked afterwards."""
-    settings = Settings(data_dir=tmp_path / "data", browse_roots=str(tree["root"]))
+    settings = Settings(_env_file=None, data_dir=tmp_path / "data", browse_roots=str(tree["root"]))
     roots = settings.resolved_browse_roots()
     assert settings.upload_dir.resolve() in roots
 
 
 def test_upload_path_is_sanitised(tmp_path):
-    settings = Settings(data_dir=tmp_path / "data")
+    settings = Settings(_env_file=None, data_dir=tmp_path / "data")
     # A directory component in the client-supplied name must not escape: only the
     # basename survives, so these land in the upload dir like anything else.
     assert safe_upload_path("../../etc/passwd", settings).parent == settings.upload_dir
@@ -127,7 +127,7 @@ def test_upload_path_is_sanitised(tmp_path):
 
 
 def test_upload_path_does_not_clobber(tmp_path):
-    settings = Settings(data_dir=tmp_path / "data")
+    settings = Settings(_env_file=None, data_dir=tmp_path / "data")
     settings.ensure_dirs()
     first = safe_upload_path("data.csv", settings)
     first.write_text("x")

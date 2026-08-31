@@ -168,7 +168,7 @@ def test_a_table_with_nothing_to_summarise_says_so(app_ctx, run_op, tmp_path):
         tmp_path / "b.csv", ["who", "ts"], rows)))
     proposal = plan(app_ctx, ds)
     assert proposal.features == []
-    assert "no repeated category" in proposal.blocked
+    assert "recur" in proposal.blocked
 
 
 # --------------------------------------------------------------------------- #
@@ -185,3 +185,82 @@ def test_the_proposal_can_be_run_as_given(app_ctx, run_op, mail):
     assert after.row_count == 3000, "features annotate, they do not reshape"
     assert after.column("share_by_country") is not None
     assert after.column("percentile_urls_by_recipient_id") is not None
+
+
+# --------------------------------------------------------------------------- #
+# a browsing log: many values, all of them recurring
+# --------------------------------------------------------------------------- #
+def _profile(rows: int, columns: dict[str, tuple[int, str, str, str | None]]):
+    """Build a profile straight from counts, so a real schema can be tested
+    without carrying the millions of rows it came from."""
+    from dataq.core.profile import ColumnProfile, ColumnStats, DatasetProfile
+
+    return DatasetProfile(
+        dataset_id="x", version=1, row_count=rows,
+        columns=[
+            ColumnProfile(
+                name=name, physical_type=ptype, semantic_type=sem, role=role,
+                stats=ColumnStats(name=name, physical_type=ptype, row_count=rows,
+                                  distinct_count=distinct),
+            )
+            for name, (distinct, ptype, role, sem) in columns.items()
+        ],
+    )
+
+
+HTTP_LOG = _profile(3_451_665, {
+    "id":   (3_451_665, "VARCHAR",   "key",       "identity.key"),
+    "date": (1_598_640, "TIMESTAMP", "time",      "time.timestamp"),
+    "user": (    1_064, "VARCHAR",   "dimension", None),
+    "pc":   (    1_161, "VARCHAR",   "dimension", None),
+    "url":  (  110_491, "VARCHAR",   "dimension", "identity.url"),
+})
+
+
+def test_a_hundred_thousand_urls_is_still_a_category():
+    """Each URL appears about thirty times, so "has this user been here before"
+    is a real question. An absolute cap on distinct values called it an
+    identifier and proposed nothing at all."""
+    text = propose(HTTP_LOG).text
+    assert "count() by user, url over 30d" in text
+    assert "days_since_last() by user, url" in text
+    assert "share() by url" in text
+
+
+def test_a_column_with_a_value_per_row_is_not_a_category():
+    """id is unique: its share is 1/N everywhere and nobody has seen the same
+    one twice."""
+    assert "id" not in propose(HTTP_LOG).text
+
+
+def test_the_actor_is_the_one_named_like_one():
+    """user and pc have a thousand values each and a few thousand events each;
+    they differ by nine percent, which is noise. The name is the only remaining
+    evidence, and it is the right evidence."""
+    proposal = propose(HTTP_LOG)
+    assert proposal.actor == "user"
+    assert "count() by user, pc over 30d" in proposal.text, \
+        "and the machine becomes a category, which is the interesting pairing"
+
+
+def test_the_name_nudge_does_not_override_the_numbers():
+    """A column that is genuinely a better actor still wins without the name."""
+    log = _profile(100_000, {
+        "ts":       (50_000, "TIMESTAMP", "time",      "time.timestamp"),
+        "user":     (     3, "VARCHAR",   "dimension", None),
+        "device_id": (2_000, "VARCHAR",   "dimension", None),
+    })
+    assert propose(log).actor == "device_id"
+
+
+def test_nothing_recurs_is_reported_as_that(app_ctx):
+    """The message has to name the actual reason, not a number nobody set."""
+    log = _profile(500, {
+        "ts":     (500, "TIMESTAMP", "time",      "time.timestamp"),
+        "who":    ( 50, "VARCHAR",   "dimension", None),
+        "ref":    (498, "VARCHAR",   "dimension", None),
+    })
+    proposal = propose(log)
+    assert proposal.actor == "who"
+    assert proposal.features == []
+    assert "recur" in proposal.blocked
