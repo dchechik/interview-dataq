@@ -176,7 +176,23 @@ days_since_last()  by user, activity_type
 avg(amount)        by user over 7d as spend_7d
 ```
 
-Each parses to a typed `Feature` — which is what the API and the agent exchange,
+The editor opens with a draft rather than an empty box. Knowing the language
+exists is not the same as knowing what to write, and the useful expressions
+follow from the table: pick whoever acts, pick the clock, then every categorical
+column gets the same three questions — how often has this actor seen this value
+lately, how long since they last did, and how common is it across everyone — and
+every numeric column gets a percentile, overall and within the actor.
+
+The one thing the table cannot settle is **who acts**, so that is shown and not
+assumed. Two email columns can be identical in type and semantics; whether
+behaviour is per-recipient or per-sender is a question about intent. Candidates
+are ranked on the *weaker* of two things — how many of them there are, and how
+many events each has — because ranking on either alone goes wrong in opposite
+directions: cardinality picks a near-unique sender address over the recipient it
+was sent to, and events-per-value picks the seven-value country column over
+both. Changing the actor rewrites the draft; typing in the box stops it.
+
+Each expression parses to a typed `Feature` — which is what the API and the agent exchange,
 the shorthand being for people — and compiles to one SQL window expression. There
 is a `raw` escape hatch for the rest, the same structure-plus-a-way-out pairing
 as `ChartSpec` and its `raw_vega_lite`.

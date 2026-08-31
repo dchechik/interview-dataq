@@ -176,6 +176,30 @@ export interface ImportPlan {
   rows: unknown[][]
 }
 
+export interface ActorChoice {
+  column: string
+  distinct: number
+  reason: string
+}
+
+export interface ProposedFeature {
+  expression: string
+  explains: string
+}
+
+/** A draft feature set, and the choices behind it. */
+export interface FeatureProposal {
+  actor: string | null
+  actor_options: ActorChoice[]
+  time_column: string | null
+  window: string
+  features: ProposedFeature[]
+  /** Sorts this set costs — the number that predicts the wait. */
+  distinct_windows: number
+  /** Why there is nothing to propose, when there is nothing. */
+  blocked: string | null
+}
+
 export interface BrowseEntry {
   name: string
   path: string

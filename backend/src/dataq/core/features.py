@@ -43,11 +43,15 @@ SeqFn = Literal["days_since_last", "days_since_first", "event_index"]
 
 FeatureFn = Literal[
     "count", "count_distinct", "sum", "avg", "min", "max", "stddev", "median",
-    "share", "days_since_last", "days_since_first", "event_index",
+    "share", "percentile", "days_since_last", "days_since_first", "event_index",
 ]
 
 SEQUENCE_FNS: frozenset[str] = frozenset(("days_since_last", "days_since_first",
                                           "event_index"))
+# Where a value sits in a distribution is a question about the whole column, not
+# about a span of time: cume_dist has no frame to narrow. So a window on it is
+# rejected rather than quietly ignored.
+UNWINDOWED_FNS: frozenset[str] = frozenset(("percentile",))
 # Functions that take no column: they count rows rather than summarise a value.
 NULLARY_FNS: frozenset[str] = frozenset(("count", "share", "days_since_last",
                                          "days_since_first", "event_index"))
@@ -164,6 +168,7 @@ class Feature(BaseModel):
             "days_since_last": "days since the previous event",
             "days_since_first": "days since the first event",
             "event_index": "position in the sequence",
+            "percentile": f"where {self.column} sits in the distribution",
         }.get(self.fn, f"{self.fn} of {self.column}")
         who = f" for the same {' + '.join(self.by)}" if self.by else ""
         if self.is_sequence:
@@ -209,6 +214,11 @@ def validate(feature: Feature, columns: set[str], time_column: str | None) -> No
         raise FeatureError(
             f"{feature.fn}() is about neighbouring events, not a span of time, "
             "so it cannot take a window"
+        )
+    if feature.fn in UNWINDOWED_FNS and feature.window.kind != "all":
+        raise FeatureError(
+            f"{feature.fn}() ranks a value against a whole column, so it cannot "
+            "take a window"
         )
     needs_time = feature.is_sequence or feature.window.kind in ("trailing", "calendar")
     if needs_time and not time_column:
@@ -281,6 +291,15 @@ def to_sql(feature: Feature, time_column: str | None) -> str:
     if feature.fn == "event_index":
         order = f"PARTITION BY {', '.join(quote(k) for k in feature.by)} " if feature.by else ""
         return f"row_number() OVER ({order}ORDER BY {ts})"
+
+    if feature.fn == "percentile":
+        part = (f"PARTITION BY {', '.join(quote(k) for k in feature.by)} "
+                if feature.by else "")
+        # NULL sorts last, so cume_dist would report a missing value as the
+        # maximum -- the most extreme thing in the column. A value that is not
+        # there has no percentile, and saying so is the only honest answer.
+        return (f"CASE WHEN {col} IS NULL THEN NULL ELSE "
+                f"cume_dist() OVER ({part}ORDER BY {col}) END")
 
     if feature.fn == "share":
         # Share of what: the same window, but without the partition. So "share

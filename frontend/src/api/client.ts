@@ -6,6 +6,7 @@ import type {
   DatasetProfile,
   DatasetSummary,
   DeleteResult,
+  FeatureProposal,
   ImportPlan,
   Job,
   LineageStep,
@@ -187,6 +188,17 @@ export const api = {
       { username, password },
     ),
   me: () => request<{ username: string | null }>('/auth/me'),
+
+  /** A draft feature set for this table, for the editor to open with. */
+  featurePlan: (id: string, actor?: string, window?: string) => {
+    const q = new URLSearchParams()
+    if (actor) q.set('actor', actor)
+    if (window) q.set('window', window)
+    const qs = q.toString()
+    return request<FeatureProposal>(
+      `/datasets/${id}/feature-plan${qs ? `?${qs}` : ''}`,
+    )
+  },
 
   /** Propose how each column should be imported, with the evidence for it. */
   planImport: (uri: string, params: Record<string, unknown> = {}) =>

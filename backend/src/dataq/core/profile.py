@@ -142,22 +142,34 @@ def entity_columns(profile: DatasetProfile,
     ask "how often does this one do X" about. So a typed entity is preferred,
     and an untyped repeating dimension still qualifies.
 
-    Ordered by distinct count descending, because that is what separates an
-    actor from a category: many users, few activity types. Deliberately *not*
-    ordered by whether the column has a semantic type -- detection gives up on
-    high-cardinality columns, so a real user id is typically untyped while the
-    5-value activity_type beside it is a confident `categorical`. Ranking types
-    first therefore picks the category over the actor, which is precisely
-    backwards.
+    An actor needs two things at once, and the weaker of them is what limits it:
+    **many of them**, so the population means something, and **many events
+    each**, so there is a history to compare against. Ranking on either alone
+    gets it wrong in opposite directions -- cardinality picks a near-unique
+    sender address over the recipient it was sent to, and events-per-value picks
+    the seven-value country column over both. Scoring on the smaller of the two
+    picks the recipient.
+
+    Deliberately not ordered by whether the column has a semantic type:
+    detection gives up on high-cardinality columns, so a real user id is often
+    untyped while the five-value category beside it is a confident
+    `categorical`, and ranking types first prefers the category.
     """
-    def rank(c: ColumnProfile) -> int | None:
+    def rank(c: ColumnProfile) -> float | None:
         if c.role in ("time", "measure", "ignore"):
             return None
-        if c.stats is not None and c.stats.distinct_frac >= ENTITY_MAX_DISTINCT_FRAC:
-            return None  # a per-row identifier: grouping puts one event in each
         if not (is_entity(c, types) or c.role == "dimension"):
             return None
-        return -(c.stats.distinct_count if c.stats else 0)
+        stats = c.stats
+        if stats is None:
+            return 0.0
+        if stats.distinct_frac >= ENTITY_MAX_DISTINCT_FRAC:
+            return None  # a per-row identifier: grouping puts one event in each
+        distinct = stats.distinct_count
+        if not distinct:
+            return None
+        per_value = stats.row_count / distinct
+        return -min(distinct, per_value)
 
     scored = [(r, c) for c in profile.columns if (r := rank(c)) is not None]
     return [c for _, c in sorted(scored, key=lambda pair: pair[0])]

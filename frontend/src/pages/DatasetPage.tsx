@@ -21,6 +21,7 @@ import type {
   RelatedDataset,
   Suggestion,
 } from '../api/types'
+import { FeatureDraft } from '../components/FeatureDraft'
 import { JobProgress, StatusBadge } from '../components/JobProgress'
 import { SchemaForm } from '../components/SchemaForm'
 
@@ -187,6 +188,9 @@ function RunPluginPanel({
 }) {
   const [selected, setSelected] = useState<string>('')
   const [params, setParams] = useState<Record<string, unknown>>({})
+  // Once the user has typed, the draft stops overwriting them — changing the
+  // actor should re-propose, but not silently discard what they wrote.
+  const [edited, setEdited] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const operation = useOperation()
 
@@ -216,6 +220,7 @@ function RunPluginPanel({
         onChange={(e) => {
           setSelected(e.target.value)
           setParams({})
+          setEdited(false)
         }}
         className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
       >
@@ -251,12 +256,28 @@ function RunPluginPanel({
               <span className="ml-1 rounded bg-amber-100 px-1 text-amber-800">costs money</span>
             )}
           </p>
+          {/* The one plugin whose form opens with something in it. Its input is
+              a language, and a blank box asking for one is a worse prompt than
+              a draft you can edit. */}
+          {plugin.id === 'enrich.features' && (
+            <FeatureDraft
+              datasetId={datasetId}
+              hasEdits={edited}
+              onUse={(expressions) => {
+                setEdited(false)
+                setParams((p) => ({ ...p, features: expressions }))
+              }}
+            />
+          )}
           {/* The form is generated from the plugin's JSON Schema: a new backend
               plugin gets a working UI with no frontend change. */}
           <SchemaForm
             schema={plugin.params_schema}
             value={params}
-            onChange={setParams}
+            onChange={(next) => {
+              setEdited(true)
+              setParams(next)
+            }}
             columns={columns}
           />
           <button

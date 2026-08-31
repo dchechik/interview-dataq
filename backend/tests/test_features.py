@@ -291,3 +291,33 @@ def test_coerce_accepts_strings_dicts_and_models():
         Feature(fn="event_index", by=["user"]),
     ])
     assert [f.fn for f in feats] == ["count", "share", "event_index"]
+
+
+# --------------------------------------------------------------------------- #
+# percentile
+# --------------------------------------------------------------------------- #
+def test_percentile_places_a_value_in_its_distribution(conn):
+    """Ties share a value, and it reads as 'the fraction at or below this'."""
+    assert compute(conn, "percentile(amount)") == [0.2, 0.4, 0.6, 0.8, 1.0]
+
+
+def test_percentile_within_an_entity(conn):
+    """u1's four amounts rank against each other, not against u2's."""
+    assert compute(conn, "percentile(amount) by user") == [0.25, 0.5, 0.75, 1.0, 1.0]
+
+
+def test_a_missing_value_has_no_percentile(conn):
+    """NULL sorts last, so cume_dist alone would report a missing value as the
+    most extreme thing in the column."""
+    conn.execute("INSERT INTO ev VALUES ('u3', TIMESTAMP '2016-01-09', 'login', 'x', NULL)")
+    assert compute(conn, "percentile(amount)")[-1] is None
+
+
+def test_percentile_cannot_take_a_window():
+    with pytest.raises(FeatureError, match="whole column"):
+        validate(parse("percentile(amount) over 30d"), COLUMNS, "ts")
+
+
+def test_percentile_needs_a_column():
+    with pytest.raises(FeatureError, match="needs a column"):
+        validate(parse("percentile()"), COLUMNS, "ts")

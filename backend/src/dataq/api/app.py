@@ -33,6 +33,7 @@ from ..query.compiler import QueryError
 from ..query.spec import QueryResult, QuerySpec
 from ..services import browse as browse_service
 from ..services import datasets as dataset_service
+from ..services import feature_plan as feature_plan_service
 from ..services import import_plan
 from ..services import inspect as inspect_service
 from ..services import lineage as lineage_service
@@ -347,6 +348,23 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - a flat route table
             "versions": result.versions,
             "bytes_freed": result.bytes_freed,
         }
+
+    @app.get("/api/datasets/{dataset_id}/feature-plan")
+    def feature_plan(dataset_id: str, actor: str | None = None,
+                     window: str = "30d", version: int | None = None) -> dict:
+        """A draft feature set for this table, for the editor to open with.
+
+        ``actor`` overrides the guessed column, because whether behaviour is
+        measured per recipient or per sending host is a question about intent
+        that the table cannot answer.
+        """
+        profile = context().catalog.get_profile(dataset_id, version)
+        if profile is None:
+            raise HTTPException(404, "dataset or version not found")
+        try:
+            return feature_plan_service.propose(profile, actor, window).model_dump()
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     @app.get("/api/datasets/{dataset_id}/dependents")
     def dataset_dependents(dataset_id: str) -> list[dict]:
