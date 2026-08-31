@@ -231,3 +231,44 @@ def test_spa_deep_links_fall_back_to_index(app_ctx, tmp_path):
                 assert "<!doctype html>" not in r.text.lower(), asset
     finally:
         app_module.CTX = None
+
+
+# --------------------------------------------------------------------------- #
+# the join form's two questions
+# --------------------------------------------------------------------------- #
+def test_join_candidates_and_preview(client, app_ctx, tmp_path):
+    """What the join panel asks as it is being filled in: which datasets are
+    joinable, and what would happen if this key were used."""
+    auth = _import(client, app_ctx, write_auth_csv(tmp_path / "auth.csv", rows=400), "auth")
+    r = client.post("/api/operations", json={
+        "op": "aggregate", "plugin_id": "agg.frequency",
+        "inputs": [{"dataset_id": auth}], "params": {"column": "country"},
+        "output_name": "freq"})
+    app_ctx.runner.wait(r.json()["job_id"], timeout=120)
+    freq = client.get(f"/api/jobs/{r.json()['job_id']}").json()[
+        "steps"][0]["outputs"][0]["dataset_id"]
+
+    found = client.get(f"/api/datasets/{auth}/join-candidates").json()
+    assert freq in [c["dataset_id"] for c in found]
+    keys = next(c for c in found if c["dataset_id"] == freq)["keys"]
+    assert {"left", "right", "semantic_type", "reason"} <= set(keys[0])
+
+    preview = client.post(f"/api/datasets/{auth}/join-preview", json={
+        "right_dataset_id": freq,
+        "params": {"left_column": "country", "right_column": "country"}}).json()
+    assert preview["fanout"] is False
+    assert preview["result_rows"] == preview["left_rows"] == 400
+    assert "share" in preview["columns_added"]
+
+
+def test_join_preview_reports_a_bad_key_as_400(client, app_ctx, tmp_path):
+    auth = _import(client, app_ctx, write_auth_csv(tmp_path / "auth.csv", rows=100), "auth")
+    r = client.post(f"/api/datasets/{auth}/join-preview", json={
+        "right_dataset_id": auth, "params": {}})
+    assert r.status_code == 400
+    # The message goes into a form, so it says what to do and nothing else.
+    assert r.json()["detail"].startswith("a join needs a key")
+
+
+def test_join_candidates_for_an_unknown_dataset_is_404(client):
+    assert client.get("/api/datasets/nope/join-candidates").status_code == 404

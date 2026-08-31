@@ -5,10 +5,14 @@ import type {
   DatasetNode,
   DatasetProfile,
   DatasetSummary,
+  DatasetVersion,
   DeleteResult,
   FeatureProposal,
   ImportPlan,
   Job,
+  JoinCandidate,
+  JoinPreview,
+  JoinPreviewRequest,
   LineageStep,
   OperationAccepted,
   OperationRequest,
@@ -17,6 +21,7 @@ import type {
   QuerySpec,
   Related,
   RenderedViz,
+  SemanticType,
   Suggestion,
   UploadResult,
 } from './types'
@@ -136,10 +141,19 @@ export const api = {
     const qs = q.toString()
     return request<PluginDescriptor[]>(`/plugins${qs ? `?${qs}` : ''}`)
   },
-  semanticTypes: () =>
-    request<
-      { id: string; title: string; parent: string | null; role: string; joinable: boolean }[]
-    >('/semantic-types'),
+  semanticTypes: () => request<SemanticType[]>('/semantic-types'),
+  createSemanticType: (body: {
+    id: string
+    title?: string
+    parent: string
+    role?: string | null
+    joinable?: boolean
+    description?: string
+  }) => post<SemanticType>('/semantic-types', body),
+  deleteSemanticType: (id: string) =>
+    request<{ deleted: string }>(`/semantic-types/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
 
   // --- datasets ---
   datasets: () => request<DatasetSummary[]>('/datasets'),
@@ -154,9 +168,14 @@ export const api = {
     request<{ id: string; name: string; kind: string }[]>(`/datasets/${id}/dependents`),
   profile: (id: string, version?: number) =>
     request<DatasetProfile>(`/datasets/${id}/profile${version ? `?version=${version}` : ''}`),
-  versions: (id: string) =>
-    request<{ version: number; row_count: number; created_at: string; columns: number }[]>(
-      `/datasets/${id}/versions`,
+  versions: (id: string) => request<DatasetVersion[]>(`/datasets/${id}/versions`),
+  /** Bring an earlier version back as a new one. Runs as a job: it copies rows. */
+  revertDataset: (id: string, version: number) =>
+    post<OperationAccepted>(`/datasets/${id}/revert`, { version }),
+  deleteVersion: (id: string, version: number) =>
+    request<{ dataset_id: string; version: number; bytes_freed: number }>(
+      `/datasets/${id}/versions/${version}`,
+      { method: 'DELETE' },
     ),
   lineage: (id: string) => request<LineageStep[]>(`/datasets/${id}/lineage`),
   suggestions: (id: string, kind?: string) =>
@@ -199,6 +218,13 @@ export const api = {
       `/datasets/${id}/feature-plan${qs ? `?${qs}` : ''}`,
     )
   },
+
+  /** Datasets this one could be joined to. Profiles only — costs nothing. */
+  joinCandidates: (id: string) =>
+    request<JoinCandidate[]>(`/datasets/${id}/join-candidates`),
+  /** What the join these params describe would do, without running it. */
+  joinPreview: (id: string, body: JoinPreviewRequest) =>
+    post<JoinPreview>(`/datasets/${id}/join-preview`, body),
 
   /** Propose how each column should be imported, with the evidence for it. */
   planImport: (uri: string, params: Record<string, unknown> = {}) =>

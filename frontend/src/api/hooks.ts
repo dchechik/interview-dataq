@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
 import { api, withToken } from './client'
-import type { Job, OperationRequest, QuerySpec } from './types'
+import type { Job, JoinPreviewRequest, OperationRequest, QuerySpec } from './types'
 import { TERMINAL_STATUSES } from './types'
 
 export const keys = {
@@ -14,6 +14,8 @@ export const keys = {
   versions: (id: string) => ['versions', id] as const,
   lineage: (id: string) => ['lineage', id] as const,
   suggestions: (id: string, kind?: string) => ['suggestions', id, kind ?? 'all'] as const,
+  joinCandidates: (id: string) => ['join-candidates', id] as const,
+  joinPreview: (id: string, body: unknown) => ['join-preview', id, body] as const,
   plugins: (p: object) => ['plugins', p] as const,
   jobs: ['jobs'] as const,
   job: (id: string) => ['job', id] as const,
@@ -66,6 +68,29 @@ export const useSuggestions = (id: string | undefined, kind?: string) =>
     queryKey: keys.suggestions(id ?? '', kind),
     queryFn: () => api.suggestions(id!, kind),
     enabled: Boolean(id),
+  })
+
+/**
+ * Datasets this one could be joined to. Cached per dataset — the answer comes
+ * from profiles, and changing a column's meaning invalidates it the same way it
+ * invalidates suggestions.
+ */
+export const useJoinCandidates = (id: string | undefined) =>
+  useQuery({
+    queryKey: keys.joinCandidates(id ?? ''),
+    queryFn: () => api.joinCandidates(id!),
+    enabled: Boolean(id),
+  })
+
+/**
+ * What the join would do, asked afresh whenever the key changes. Keyed on the
+ * whole request body so switching back to a key you already tried is instant.
+ */
+export const useJoinPreview = (id: string | undefined, body: JoinPreviewRequest | null) =>
+  useQuery({
+    queryKey: keys.joinPreview(id ?? '', body),
+    queryFn: () => api.joinPreview(id!, body!),
+    enabled: Boolean(id && body),
   })
 
 export const usePlugins = (params: { kind?: string; mode?: string; applicable_to?: string } = {}) =>

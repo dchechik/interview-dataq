@@ -10,23 +10,25 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..core.profile import ColumnProfile, DatasetProfile
 from ..jobs.context import JobCtx
-from ..jobs.executor import run_transform
+from ..jobs.executor import name_collisions, run_transform
 from ..plugins.base import REGISTRY
+from ..plugins.builtin import readers
 from ..plugins.builtin.readers import pick_reader
 from ..plugins.kinds import AggregateCtx, AggregatePlan, Aggregator, Reader, Transform
 from ..query.compiler import quote_ident
 from ..query.spec import QuerySpec
-from ..storage.base import VersionRef
+from ..storage.base import StoredRef, VersionRef
 from .browse import assert_readable_uri
 from .context import AppContext
 from .import_plan import (
     ColumnPlan,
     cast_expr,
     cast_projection,
+    explain_read_error,
     text_columns,
     validate_plan,
 )
@@ -42,7 +44,7 @@ class DatasetInput(BaseModel):
 class OperationRequest(BaseModel):
     """The single request shape for import / transform / aggregate / join."""
 
-    op: Literal["import", "transform", "aggregate", "join"]
+    op: Literal["import", "transform", "aggregate", "join", "revert"]
     plugin_id: str = ""
     inputs: list[DatasetInput] = []
     params: dict[str, Any] = {}
@@ -77,6 +79,25 @@ class DryRunResult(BaseModel):
     estimated_cost_usd: float | None = None
     estimated_seconds: float | None = None
     notes: list[str] = []
+
+
+@contextmanager
+def _readable_read_errors():
+    """Re-raise a malformed-row failure as the sentence a person can act on.
+
+    Wrapped around the whole read because DuckDB's CSV scan is lazy: the error
+    does not come from ``to_relation``, it comes from whichever query first
+    pulls rows through it -- the cast measurement, or the write. Anything that
+    is not a row-parsing failure passes through untouched, so a real bug still
+    arrives with its own type and message.
+    """
+    try:
+        yield
+    except Exception as exc:
+        hint = explain_read_error(exc)
+        if hint is None:
+            raise
+        raise ValueError(hint) from exc
 
 
 @contextmanager
@@ -246,7 +267,7 @@ def run_import(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
     params = reader_cls.parse_params(raw_params)
     name = req.name or req.uri.rsplit("/", 1)[-1].split(".")[0] or "dataset"
 
-    with ctx.warehouse.cur() as conn:
+    with _readable_read_errors(), ctx.warehouse.cur() as conn:
         job_ctx.log(f"reading {req.uri} with {reader_cls.id}")
         rel = reader.to_relation(conn, req.uri, params)
         columns = list(zip(rel.columns, [str(t) for t in rel.types], strict=True))
@@ -298,6 +319,13 @@ def run_import(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
                 conn, reader_cls, req.uri, raw_params, columns, job_ctx,
                 skip={p.name for p in plans if p.format})
             warnings.update(cast_losses)
+            # Rows the reader was told to skip. Counted rather than assumed:
+            # "skip the bad rows" is a reasonable thing to ask for and a
+            # terrible thing to be given silently, since the resulting dataset
+            # looks complete and is not.
+            skipped = readers.rejected_rows(conn)
+            if skipped:
+                job_ctx.log(f"WARNING {skipped.describe()}")
             profile_and_store(
                 ctx, conn, dataset.id, version.id, ctx.storage.sql_source(stored),
                 columns, previous=_planned_profiles(plans, columns),
@@ -463,9 +491,31 @@ def run_aggregate_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) ->
 # --------------------------------------------------------------------------- #
 # join
 # --------------------------------------------------------------------------- #
+class JoinKey(BaseModel):
+    """One column pair the two sides are matched on."""
+
+    left: str
+    right: str
+
+
 class JoinParams(BaseModel):
-    left_column: str
-    right_column: str
+    """What to join on, and what to bring across.
+
+    The key is a *list* of pairs because one pair is often not enough to identify
+    a row. A table of per-``(user, activity_type)`` counts has neither column
+    unique on its own -- each user appears once per activity, each activity once
+    per user -- so matching on either alone multiplies rows, and only the pair
+    annotates them. That case is what ``allow_fanout`` was added for; a composite
+    key answers it properly instead.
+    """
+
+    on: list[JoinKey] = []
+    # The one-pair spelling, which is what a suggestion's action and the agent's
+    # create_join emit. Kept rather than migrated: a Suggestion carries a literal
+    # request body, and there is no reason a single-column key should have to be
+    # written as a list.
+    left_column: str = ""
+    right_column: str = ""
     how: Literal["inner", "left"] = "left"
     # Columns to bring across from the right side; empty means all non-key columns.
     right_select: list[str] = []
@@ -474,6 +524,22 @@ class JoinParams(BaseModel):
     # annotating them. Almost always that is a mistake -- the wrong key, or a
     # key that needs a second column -- so it is refused unless asked for.
     allow_fanout: bool = False
+
+    @model_validator(mode="after")
+    def _normalise_key(self) -> JoinParams:
+        """Fold the one-pair spelling into ``on``, so nothing downstream reads both."""
+        if not self.on:
+            if not (self.left_column and self.right_column):
+                raise ValueError(
+                    "a join needs a key: either on=[{left, right}, ...] or "
+                    "left_column and right_column"
+                )
+            self.on = [JoinKey(left=self.left_column, right=self.right_column)]
+        return self
+
+    @property
+    def key_description(self) -> str:
+        return ", ".join(f"{k.left} = {k.right}" for k in self.on)
 
 
 def run_join_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
@@ -485,24 +551,41 @@ def run_join_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
     lsrc = ctx.resolve_source(left.dataset_id, left.version)
     rsrc = ctx.resolve_source(right.dataset_id, right.version)
 
-    if p.left_column not in lsrc.columns:
-        raise ValueError(f"left column {p.left_column!r} not found")
-    if p.right_column not in rsrc.columns:
-        raise ValueError(f"right column {p.right_column!r} not found")
+    for k in p.on:
+        if k.left not in lsrc.columns:
+            raise ValueError(f"left column {k.left!r} not found")
+        if k.right not in rsrc.columns:
+            raise ValueError(f"right column {k.right!r} not found")
 
-    right_cols = p.right_select or [c for c in rsrc.columns if c != p.right_column]
+    key_columns = {k.right for k in p.on}
+    right_cols = p.right_select or [c for c in rsrc.columns if c not in key_columns]
     missing = [c for c in right_cols if c not in rsrc.columns]
     if missing:
         raise ValueError(f"right columns not found: {missing}")
 
     prefix = p.prefix or ""
+    added = [prefix + c for c in right_cols]
+    # Two result columns of the same name is something DuckDB will happily
+    # return and the catalog cannot store -- one column per name per version.
+    # Caught here, where there is still a remedy to name, rather than as an
+    # integrity error after the whole join has been written.
+    collisions = name_collisions(lsrc.columns, added)
+    if collisions:
+        raise ValueError(
+            f"joining would produce duplicate columns: {', '.join(collisions)}. "
+            "Set a prefix, or name the columns to bring across in right_select."
+        )
+
     projection = ["l.*"] + [
         f"r.{quote_ident(c)} AS {quote_ident(prefix + c)}" for c in right_cols
     ]
+    on = " AND ".join(
+        f"l.{quote_ident(k.left)} = r.{quote_ident(k.right)}" for k in p.on
+    )
     sql = (
         f"SELECT {', '.join(projection)} FROM {lsrc.sql} l "
         f"{'INNER' if p.how == 'inner' else 'LEFT'} JOIN {rsrc.sql} r "
-        f"ON l.{quote_ident(p.left_column)} = r.{quote_ident(p.right_column)}"
+        f"ON {on}"
     )
 
     lname = ctx.catalog.get_dataset(left.dataset_id)
@@ -511,7 +594,7 @@ def run_join_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
 
     with _new_dataset(
         ctx, name=out_name, kind="join", view_sql=sql,
-        description=f"{p.how} join on {p.left_column} = {p.right_column}",
+        description=f"{p.how} join on {p.key_description}",
     ) as dataset:
         ref = VersionRef(dataset_id=dataset.id, version=1)
         with ctx.warehouse.cur() as conn:
@@ -526,12 +609,14 @@ def run_join_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
                 # count downstream is inflated and nothing says why.
                 with ctx.warehouse.ddl_lock:
                     ctx.storage.drop(stored, conn)
+                keys = ", ".join(k.right for k in p.on)
                 raise ValueError(
-                    f"joining on {p.right_column} turned {left_rows:,} rows into "
+                    f"joining on {keys} turned {left_rows:,} rows into "
                     f"{stored.rows:,}: the right side has more than one row per "
-                    f"{p.right_column}, so each row matched several. Join on a "
-                    "column that is unique there, use enrich.features to match "
-                    "on more than one column, or pass allow_fanout to keep this."
+                    f"({keys}), so each row matched several. Add the columns "
+                    "that make the key unique there, use enrich.features to "
+                    "attach it as a new version of this dataset instead, or "
+                    "pass allow_fanout to keep this."
                 )
             job_ctx.log(f"joined {left_rows:,} rows -> {stored.rows:,}")
 
@@ -562,6 +647,89 @@ def run_join_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# revert
+# --------------------------------------------------------------------------- #
+def run_revert_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
+    """Bring an earlier version back, by writing its data as a new version.
+
+    Reverting forwards rather than moving a pointer, for three reasons that are
+    all properties of how versions are stored here:
+
+    * Version numbers are handed out by ``next_version`` and never reused, and
+      a step's provenance records the number it wrote. Moving ``latest_version``
+      backwards would point a later write at a number some step already claims.
+    * A version owns its bytes -- deleting one drops them -- so two version rows
+      cannot share a ``StoredRef`` without one delete destroying the other.
+    * History stays append-only, which means the revert is itself an ordinary
+      version, and reverting the revert is the same operation again.
+
+    So this is the "revert as a new commit" model: nothing is rewritten, and the
+    version you came from is still there afterwards.
+    """
+    if not req.inputs:
+        raise ValueError("revert requires an input dataset")
+    inp = req.inputs[0]
+    if inp.version is None:
+        raise ValueError("revert requires the version to go back to")
+
+    dataset = ctx.catalog.get_dataset(inp.dataset_id)
+    if dataset is None:
+        raise KeyError(f"unknown dataset: {inp.dataset_id}")
+    source_row = ctx.catalog.get_version(inp.dataset_id, inp.version)
+    if source_row is None:
+        raise ValueError(f"{dataset.name} has no version {inp.version}")
+    current = ctx.catalog.get_version(inp.dataset_id)
+    if current is not None and current.version == inp.version:
+        raise ValueError(
+            f"v{inp.version} is already the current version of {dataset.name}; "
+            "reverting to it would copy the data for no change"
+        )
+
+    new_version = ctx.catalog.next_version(inp.dataset_id)
+    ref = VersionRef(dataset_id=inp.dataset_id, version=new_version)
+    job_ctx.rows_total = source_row.row_count
+
+    with ctx.warehouse.cur() as conn:
+        source_sql = ctx.storage.sql_source(StoredRef(**source_row.stored_ref))
+        job_ctx.log(
+            f"copying v{inp.version} of {dataset.name} "
+            f"({source_row.row_count:,} rows) into v{new_version}"
+        )
+        with ctx.warehouse.ddl_lock:
+            stored = ctx.storage.write_relation(ref, f"SELECT * FROM {source_sql}", conn)
+
+        written = conn.sql(f"SELECT * FROM {ctx.storage.sql_source(stored)} LIMIT 0")
+        columns = list(zip(written.columns, [str(t) for t in written.types], strict=True))
+        version = ctx.catalog.add_version(
+            dataset_id=inp.dataset_id, version=new_version, stored=stored,
+            columns_schema=[{"name": n, "physical_type": t} for n, t in columns],
+            row_count=stored.rows, step_id=job_ctx.step_id,
+        )
+
+        # The column metadata is copied, not recomputed. It describes data that
+        # is byte-identical, so a re-profile would spend a full scan to
+        # rediscover what the catalog already holds -- and, being sampled, would
+        # answer with subtly different stats for data that did not change. It
+        # would also lose the parts that cannot be recomputed at all: a pin is a
+        # decision somebody made, and an import warning is a fact about text
+        # that no longer exists.
+        restored = ctx.catalog.get_profile(inp.dataset_id, inp.version)
+        if restored is not None:
+            ctx.catalog.set_columns(version.id, restored.columns)
+
+    job_ctx.progress(stored.rows, force=True)
+    ctx.catalog.update_step(
+        job_ctx.step_id, status="succeeded", rows_committed=stored.rows,
+        outputs=[{"dataset_id": inp.dataset_id, "version": new_version}],
+    )
+    job_ctx.log(
+        f"reverted {dataset.name} to v{inp.version}, written as v{new_version} "
+        f"({stored.rows:,} rows)"
+    )
+    return inp.dataset_id
+
+
+# --------------------------------------------------------------------------- #
 # dispatch
 # --------------------------------------------------------------------------- #
 _HANDLERS = {
@@ -569,12 +737,19 @@ _HANDLERS = {
     "transform": run_transform_op,
     "aggregate": run_aggregate_op,
     "join": run_join_op,
+    "revert": run_revert_op,
 }
 
 
 def submit_operation(ctx: AppContext, req: OperationRequest) -> OperationAccepted:
     """Create the job + step rows and hand the work to the runner."""
     title = f"{req.op}: {req.plugin_id or req.uri or ''}".strip()
+    if req.op == "revert" and req.inputs:
+        # The generic title would be a bare "revert:" -- no plugin, no uri. What
+        # a reader wants from the job list is which dataset went back to when.
+        src = ctx.catalog.get_dataset(req.inputs[0].dataset_id)
+        title = (f"revert: {src.name if src else req.inputs[0].dataset_id} "
+                 f"to v{req.inputs[0].version}")
     job = ctx.catalog.create_job(title=title)
     plugin_version = ""
     if req.plugin_id:

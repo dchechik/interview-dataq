@@ -54,8 +54,53 @@ def build_projection(plan: SqlPlan, source_columns: list[str]) -> str:
     return ", ".join(parts) if parts else "*"
 
 
+# Rows examined by the preflight. Enough that a wrong format shows up as a wall
+# of failures, small enough that the check costs nothing next to the write.
+PREFLIGHT_ROWS = 20_000
+
+
+def name_collisions(left_columns: list[str], added: list[str]) -> list[str]:
+    """Output names that would appear twice.
+
+    DuckDB does not object to two result columns of the same name -- it returns
+    them both -- so nothing downstream would notice until the catalog tried to
+    store two columns with one name per version. Checked here rather than
+    discovered there.
+    """
+    left = set(left_columns)
+    return [name for name in added if name in left]
+
+
+def duplicate_key_rows(conn, source_sql: str, keys: list[str]) -> int:
+    """How many distinct key values appear more than once on the right side.
+
+    Zero is what makes a join an annotation: every left row matches at most one
+    right row, so the row count cannot change. Anything else multiplies.
+    """
+    cols = ", ".join(quote_ident(k) for k in keys)
+    return conn.execute(
+        f"SELECT count(*) FROM (SELECT {cols} FROM {source_sql} "
+        f"GROUP BY ALL HAVING count(*) > 1)"
+    ).fetchone()[0]
+
+
+def match_rate(conn, joined_sql: str, probe: str) -> tuple[int, int]:
+    """``(matched, sampled)`` over a bounded prefix of a left join's output.
+
+    A left join answers "no match" with NULL, so a wrong key or an incomplete
+    right side produces a column of nothing and a job that reports success --
+    the same silence the parse checks exist to break. Counting non-nulls in the
+    probe column is what breaks it.
+    """
+    row = conn.execute(
+        f"SELECT count(*), count({quote_ident(probe)}) FROM "
+        f"(SELECT * FROM {joined_sql} LIMIT {PREFLIGHT_ROWS})"
+    ).fetchone()
+    return int(row[1] or 0), int(row[0] or 0)
+
+
 def build_join_source(join: JoinPlan, source_sql: str, source_columns: list[str],
-                      conn) -> tuple[str, list[str]]:
+                      conn) -> tuple[str, list[str], tuple[int, int]]:
     """Widen the source with columns from another dataset.
 
     The join is wrapped in a subquery rather than composed into the outer SELECT
@@ -63,25 +108,22 @@ def build_join_source(join: JoinPlan, source_sql: str, source_columns: list[str]
     as it is without a join. Which means ``add`` expressions can reference the
     brought-across columns by name without knowing a join happened at all.
     """
-    collisions = [alias for _, alias in join.select if alias in set(source_columns)]
+    collisions = name_collisions(source_columns, [alias for _, alias in join.select])
     if collisions:
         raise ValueError(
             f"joining would produce duplicate columns: {', '.join(collisions)}. "
             "Rename them, or drop them from the join's select list."
         )
 
-    keys = ", ".join(quote_ident(right) for _, right in join.on)
-    duplicated = conn.execute(
-        f"SELECT count(*) FROM (SELECT {keys} FROM {join.source_sql} "
-        f"GROUP BY ALL HAVING count(*) > 1)"
-    ).fetchone()[0]
+    keys = [right for _, right in join.on]
+    duplicated = duplicate_key_rows(conn, join.source_sql, keys)
     if duplicated:
         # A left join onto duplicated keys silently multiplies rows. Every row
         # count downstream would then be wrong, and nothing would say so.
         raise ValueError(
             f"the joined dataset has {duplicated:,} duplicated values of "
-            f"({keys}), so joining it would multiply rows instead of annotating "
-            "them. It must have one row per key."
+            f"({', '.join(quote_ident(k) for k in keys)}), so joining it would "
+            "multiply rows instead of annotating them. It must have one row per key."
         )
 
     on = " AND ".join(f"({left}) = r.{quote_ident(right)}" for left, right in join.on)
@@ -90,28 +132,15 @@ def build_join_source(join: JoinPlan, source_sql: str, source_columns: list[str]
     sql = (f"(SELECT l.*, {brought} FROM {source_sql} l "
            f"LEFT JOIN {join.source_sql} r ON {on})")
 
-    # How much of the data this actually annotates. A left join answers "no
-    # match" with NULL, so a wrong key or an incomplete right side produces a
-    # column of nothing and a job that reports success -- the same silence the
-    # parse checks exist to break.
-    probe = quote_ident(join.select[0][1])
-    row = conn.execute(
-        f"SELECT count(*), count({probe}) FROM "
-        f"(SELECT * FROM {sql} LIMIT {PREFLIGHT_ROWS})"
-    ).fetchone()
-    sampled, matched = int(row[0] or 0), int(row[1] or 0)
+    # How much of the data this actually annotates.
+    matched, sampled = match_rate(conn, sql, join.select[0][1])
     if sampled and matched == 0:
         raise ValueError(
             f"none of {sampled:,} sampled rows found a match in the joined "
             f"dataset, so every attached column would be empty. Check the join "
-            f"keys: {', '.join(right for _, right in join.on)}."
+            f"keys: {', '.join(keys)}."
         )
     return sql, [alias for _, alias in join.select], (matched, sampled)
-
-
-# Rows examined by the preflight. Enough that a wrong format shows up as a wall
-# of failures, small enough that the check costs nothing next to the write.
-PREFLIGHT_ROWS = 20_000
 
 
 def run_checks(plan: SqlPlan, conn, source_sql: str, ctx: JobCtx) -> None:

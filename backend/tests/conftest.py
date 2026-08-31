@@ -7,6 +7,22 @@ from dataq.db import Warehouse
 from dataq.storage import make_storage
 
 
+@pytest.fixture(autouse=True)
+def _clean_semantic_registry():
+    """Custom semantic types are per-catalog, but the registry is per-process.
+
+    ``build_context`` clears them, so any test that builds one is already
+    isolated. This covers the rest -- a test that registers a type directly, or
+    that never builds a context at all -- so a leftover vocabulary cannot make a
+    later test pass for the wrong reason.
+    """
+    from dataq.core.semantic import SEMANTIC_TYPES
+
+    SEMANTIC_TYPES.reset_custom()
+    yield
+    SEMANTIC_TYPES.reset_custom()
+
+
 @pytest.fixture(params=["parquet", "duckdb"])
 def storage_mode(request) -> str:
     """Every storage-touching test runs against both backends."""

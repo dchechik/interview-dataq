@@ -12,7 +12,15 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from ..config import Settings
 from ..core.profile import ColumnProfile, ColumnStats, DatasetProfile, SemanticGuess
 from ..storage.base import StoredRef
-from .models import ColumnRow, DashboardRow, DatasetRow, JobRow, StepRow, VersionRow
+from .models import (
+    ColumnRow,
+    DashboardRow,
+    DatasetRow,
+    JobRow,
+    SemanticTypeRow,
+    StepRow,
+    VersionRow,
+)
 
 
 def make_engine(settings: Settings) -> Engine:
@@ -139,6 +147,23 @@ class Catalog:
                 stmt = stmt.where(VersionRow.version == version)
             return s.exec(stmt).first()
 
+    def delete_version(self, version_id: str) -> None:
+        """Remove one version row and the column metadata hanging off it.
+
+        Deliberately not touching ``DatasetRow.latest_version``: it is what
+        ``next_version`` allocates from, so lowering it would hand a future
+        write a number some step's provenance already refers to. The service
+        layer keeps that safe by refusing to delete the newest version, which
+        is what makes the high-water mark and the newest row the same number.
+        """
+        with self.session() as s:
+            for c in s.exec(select(ColumnRow).where(ColumnRow.version_id == version_id)):
+                s.delete(c)
+            row = s.get(VersionRow, version_id)
+            if row is not None:
+                s.delete(row)
+            s.commit()
+
     def list_versions(self, dataset_id: str) -> list[VersionRow]:
         with self.session() as s:
             return list(
@@ -186,6 +211,63 @@ class Catalog:
                 row.role = role
             s.add(row)
             s.commit()
+
+    # --- semantic types ----------------------------------------------------
+    def list_semantic_types(self) -> list[SemanticTypeRow]:
+        with self.session() as s:
+            return list(s.exec(select(SemanticTypeRow).order_by(SemanticTypeRow.id)))
+
+    def upsert_semantic_type(self, row: SemanticTypeRow) -> SemanticTypeRow:
+        """Define a meaning, or edit one that exists.
+
+        Upsert rather than insert because the id *is* the identity: two people
+        deciding independently that a column means ``machine.name`` should land
+        on the same type, not on a conflict.
+        """
+        with self.session() as s:
+            existing = s.get(SemanticTypeRow, row.id)
+            if existing is not None:
+                existing.title = row.title
+                existing.parent = row.parent
+                existing.role = row.role
+                existing.joinable = row.joinable
+                existing.description = row.description
+                s.add(existing)
+                s.commit()
+                s.refresh(existing)
+                return existing
+            s.add(row)
+            s.commit()
+            s.refresh(row)
+            return row
+
+    def delete_semantic_type(self, type_id: str) -> bool:
+        with self.session() as s:
+            row = s.get(SemanticTypeRow, type_id)
+            if row is None:
+                return False
+            s.delete(row)
+            s.commit()
+            return True
+
+    def columns_using_type(self, type_id: str) -> list[tuple[str, str, str]]:
+        """``(dataset_id, dataset_name, column)`` for every column of this type.
+
+        Across all versions, not just the latest: a type still spelled out in an
+        older version's metadata is still in use, and deleting it would leave
+        that version describing itself in a vocabulary nothing can read.
+        """
+        with self.session() as s:
+            rows = s.exec(
+                select(DatasetRow.id, DatasetRow.name, ColumnRow.name)
+                .join(VersionRow, VersionRow.dataset_id == DatasetRow.id)
+                .join(ColumnRow, ColumnRow.version_id == VersionRow.id)
+                .where(ColumnRow.semantic_type == type_id)
+            ).all()
+        seen: dict[tuple[str, str], tuple[str, str, str]] = {}
+        for dataset_id, dataset_name, column in rows:
+            seen.setdefault((dataset_id, column), (dataset_id, dataset_name, column))
+        return sorted(seen.values(), key=lambda r: (r[1], r[2]))
 
     def get_profile(self, dataset_id: str, version: int | None = None) -> DatasetProfile | None:
         v = self.get_version(dataset_id, version)

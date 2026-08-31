@@ -14,6 +14,7 @@ from ..db import Warehouse
 from ..query.compiler import QueryCompiler, QueryError, ResolvedSource
 from ..storage import StorageBackend, make_storage
 from ..storage.base import StoredRef
+from .semantic_types import load_into_registry
 
 
 @dataclass
@@ -53,6 +54,10 @@ def build_context(settings: Settings | None = None) -> AppContext:
     settings = settings or get_settings()
     settings.ensure_dirs()
     catalog = Catalog(make_engine(settings))
+    # The semantic registry is a module-level singleton but custom types belong
+    # to a catalog, so they are loaded -- and any previous catalog's forgotten --
+    # every time a context is built.
+    load_into_registry(catalog)
     return AppContext(
         settings=settings,
         catalog=catalog,

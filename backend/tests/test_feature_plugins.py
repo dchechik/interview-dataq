@@ -200,7 +200,12 @@ def test_a_rolling_total_cannot_see_the_current_bucket(app_ctx, run_op, events):
 # the two steps together
 # --------------------------------------------------------------------------- #
 def test_attaching_a_feature_table_to_the_events(app_ctx, run_op, events):
-    """The composite-key join the standalone join op cannot express."""
+    """A composite-key join, attached as a version rather than a new dataset.
+
+    The standalone join op can express the key too; what it cannot express is
+    this -- the result being a new version of the events, with the features that
+    no grouped table can hold computed in the same pass.
+    """
     table = run_op(op="aggregate", plugin_id="agg.features",
                    inputs=[{"dataset_id": events}],
                    params={"by": ["user", "activity_type"]},

@@ -1,4 +1,3 @@
-import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
@@ -10,10 +9,12 @@ import type {
   ColumnRole,
   ImportPlan,
   Job,
+  SemanticType,
   TargetType,
 } from '../api/types'
 import { FileBrowser } from './FileBrowser'
 import { JobProgress } from './JobProgress'
+import { MeaningSelect, useSemanticTypes } from './MeaningSelect'
 
 /**
  * Importing a dataset, with the column types shown before they are frozen.
@@ -50,6 +51,42 @@ function typeLabel(sql: string): string {
   return TYPE_LABELS[key] ?? sql.toLowerCase()
 }
 
+/**
+ * What to do with a row that does not match the columns the file starts with.
+ *
+ * DuckDB stops on the first one, and says so with a list of parameter names to
+ * set — which was unusable advice, because nothing in this panel ever sent a
+ * reader parameter. These are the same three outcomes in words.
+ *
+ * "Keep" needs both flags, not either. `strict_mode=false` admits a row with
+ * *extra* values (the extras are dropped); `null_padding=true` admits one with
+ * *missing* values (padded with NULL). Each still fails on the shape the other
+ * covers, so a row-handling choice that only sets one is a choice that still
+ * stops on half the files it was chosen for.
+ */
+type RowErrorMode = 'stop' | 'keep' | 'skip'
+
+const ROW_ERROR_MODES: Record<
+  RowErrorMode,
+  { label: string; hint: string; params: Record<string, unknown> }
+> = {
+  stop: {
+    label: 'Stop the import',
+    hint: 'A file that will not parse is usually a file read with the wrong settings.',
+    params: {},
+  },
+  keep: {
+    label: 'Keep the row',
+    hint: 'Extra values are dropped, missing ones become empty. No row is lost.',
+    params: { strict_mode: false, null_padding: true },
+  },
+  skip: {
+    label: 'Skip the row',
+    hint: 'The row does not make it into the dataset. The import counts and reports them.',
+    params: { ignore_errors: true },
+  },
+}
+
 const cell = 'px-2 py-1.5 align-top'
 const control = 'w-full rounded border border-slate-300 bg-white px-1.5 py-1 text-xs'
 
@@ -63,7 +100,7 @@ function ColumnPlanRow({
   proposal: ColumnProposal
   plan: ColumnPlan
   onChange: (next: ColumnPlan) => void
-  semanticTypes: string[]
+  semanticTypes: SemanticType[]
   needsChoice: boolean
 }) {
   // Any edit marks the column as overridden, which is what freezes it against
@@ -122,16 +159,15 @@ function ColumnPlanRow({
         </td>
 
         <td className={cell}>
-          <select
+          <MeaningSelect
             className={control}
-            value={plan.semantic_type ?? ''}
-            onChange={(e) => set({ semantic_type: e.target.value || null })}
-          >
-            <option value="">—</option>
-            {semanticTypes.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
+            value={plan.semantic_type ?? null}
+            onChange={(semantic_type) => set({ semantic_type })}
+            types={semanticTypes}
+            // The type the column will *end up* as, not the one it was read as:
+            // a text date imported as TIMESTAMP should offer temporal parents.
+            physicalType={plan.target_type ?? proposal.source_type}
+          />
         </td>
 
         <td className={cell}>
@@ -189,21 +225,20 @@ export function ImportPanel() {
   const [jobId, setJobId] = useState<string | null>(null)
   const [browsing, setBrowsing] = useState(false)
   const [planning, setPlanning] = useState(false)
+  const [rowErrors, setRowErrors] = useState<RowErrorMode>('stop')
 
-  const { data: semanticTypeRows } = useQuery({
-    queryKey: ['semantic-types'],
-    queryFn: api.semanticTypes,
-    staleTime: Infinity,
-  })
-  const semanticTypes = semanticTypeRows?.map((t) => t.id) ?? []
+  const { data: semanticTypeRows } = useSemanticTypes()
+  const semanticTypes = semanticTypeRows ?? []
 
-  async function buildPlan(target = uri) {
+  async function buildPlan(target = uri, mode: RowErrorMode = rowErrors) {
     setError(null)
     setPlan(null)
     setJobId(null)
     setPlanning(true)
     try {
-      const next = await api.planImport(target)
+      // The same reader params the import will use, so the plan is a preview of
+      // the real read rather than of a stricter one that happens to fail.
+      const next = await api.planImport(target, ROW_ERROR_MODES[mode].params)
       setPlan(next)
       setEdits(
         Object.fromEntries(
@@ -253,7 +288,10 @@ export function ImportPanel() {
         op: 'import',
         uri,
         name: name || undefined,
-        params: plan ? { columns: Object.values(edits) } : undefined,
+        params: {
+          ...ROW_ERROR_MODES[rowErrors].params,
+          ...(plan ? { columns: Object.values(edits) } : {}),
+        },
       })
       setJobId(accepted.job_id)
     } catch (e) {
@@ -300,6 +338,33 @@ export function ImportPanel() {
           {planning ? 'Reading…' : plan ? 'Re-read' : 'Read columns'}
         </button>
       </div>
+
+      {/* Only CSV has a notion of a row that does not fit; parquet and JSON
+          carry their own structure. Shown before a plan exists too, because the
+          first thing a dirty file does is fail the plan. */}
+      {(!plan || plan.reader === 'read.csv') && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+          <label htmlFor="row-errors">When a row does not match the columns:</label>
+          <select
+            id="row-errors"
+            className="rounded border border-slate-300 bg-white px-1.5 py-1"
+            value={rowErrors}
+            onChange={(e) => {
+              const mode = e.target.value as RowErrorMode
+              setRowErrors(mode)
+              // Re-read straight away: the setting only means anything as part
+              // of a read, and the reason to change it is a read that just
+              // failed.
+              if (uri) buildPlan(uri, mode)
+            }}
+          >
+            {(Object.keys(ROW_ERROR_MODES) as RowErrorMode[]).map((m) => (
+              <option key={m} value={m}>{ROW_ERROR_MODES[m].label}</option>
+            ))}
+          </select>
+          <span className="text-slate-500">{ROW_ERROR_MODES[rowErrors].hint}</span>
+        </div>
+      )}
 
       {error && <p className="mt-2 rounded bg-rose-50 p-2 text-sm text-rose-800">{error}</p>}
 

@@ -145,6 +145,46 @@ Without that split, every time-based plugin picked the column up and failed
 inside DuckDB with `No function matches -(VARCHAR, INTERVAL)` and forty lines of
 candidate operators, naming neither the column nor the remedy.
 
+### Rows the file cannot parse
+
+DuckDB stops on the first row that does not match the columns it settled on, and
+says so with a list of parameters to set — `strict_mode=false`,
+`null_padding=true`, `ignore_errors=true`. Accurate, and unusable: nothing in the
+import panel ever sent a reader parameter, so the fix named in the error was one
+nobody could apply.
+
+The import panel now asks, in the three outcomes those flags actually produce:
+
+| When a row does not match the columns | What happens | Flags |
+|---|---|---|
+| **Stop the import** (default) | Nothing is imported | — |
+| **Keep the row** | Extra values dropped, missing ones empty; no row lost | `strict_mode=false`, `null_padding=true` |
+| **Skip the row** | The row is not imported, and is counted | `ignore_errors=true` |
+
+"Keep" sets *both* flags, because they cover different halves of the problem:
+`strict_mode` admits a row with too many values and still stops on one with too
+few, and `null_padding` does the reverse. Setting one would work until the file
+was broken the other way.
+
+**Skipping is counted, never silent.** `ignore_errors` on its own produces a
+dataset that looks complete and is not, which is worse than the import failing.
+So the reader turns on `store_rejects` alongside it, and the job log reports
+`skipped 1 row(s) that could not be parsed: line 21002: Expected Number of
+Columns: 2 Found: 3`. Rejects are counted by distinct file and line — DuckDB
+records one per bad *column*, so a three-column file would otherwise report one
+broken line as three — and the record is capped, so a file that is malformed all
+the way through cannot fill memory with a description of itself.
+
+The failure itself is reported as a sentence rather than DuckDB's settings dump:
+which line, what is wrong with it, the line itself, and the fact that there is a
+control for it.
+
+One thing the preview cannot do is warn you in advance. The proposal reads a
+2,000-row prefix, and this error only exists once the sniffer has settled the
+schema from its own 20,480-row sample — so a row that breaks it is always past
+what the preview looked at. That is why the control sits next to the file rather
+than appearing only after a plan comes back unhappy.
+
 ### Parsing that fails says so
 
 Every parsing expression DuckDB offers — `try_cast`, `try_strptime` — reports
@@ -228,6 +268,47 @@ is the feature table, and Chalk's `Windowed` is the `over 1d,7d,30d` fan-out. Th
 serving half of those systems is deliberately absent: features here are columns
 on a dataset, not a serving surface.
 
+### Joining, with a key you choose
+
+The semantic layer proposes joins — two datasets are joinable when they share a
+*meaning* — and for a long time proposing was the only way to get one. A
+suggestion carries a single pair of columns and a button that runs it, which
+covers the common annotation and nothing else. **Join another dataset** on the
+dataset page is the other half: pick the table, pick the key, see what it will
+do, run it. A suggestion opens the same form rather than only firing, so the
+guess is a starting point.
+
+**The key is a list of column pairs.** One pair is often not enough to identify
+a row. A table of per-`(user, activity_type)` counts has neither column unique on
+its own — each user appears once per activity, each activity once per user — so
+matching on either alone multiplies rows and only the pair annotates them. That
+is the case the fan-out refusal kept catching, and a second key column is the
+answer to it rather than a workaround.
+
+**Two failure modes are now found before the write, not after.** The op's own
+guard counts the written rows against the left input and drops the result if it
+grew, which is the right last line of defence and a poor way to learn you picked
+the wrong key: it costs a full pass and arrives as a failed job. Everything it
+checks can be checked first for the price of a `GROUP BY` and a bounded probe,
+so the form reports, as the key is edited:
+
+- whether the right side is **unique on the key**, which is what separates an
+  annotation from a multiplication;
+- **how much of the left side matches**, because a left join answers "no match"
+  with NULL and a key matching nothing still reports success;
+- whether the incoming column names are **already taken**.
+
+That last one only became reachable when people started choosing columns. DuckDB
+returns two result columns of the same name without complaint, and the catalog
+stores one column per name per version; joining two frequency aggregates, which
+both have `n`, is enough to hit it. The transform-side join has always checked
+for it, so the standalone op now shares that check rather than restating it — a
+second copy of a rule about correctness is how the two come to disagree.
+
+Fan-out is still refused rather than forbidden. `allow_fanout` keeps a
+one-to-many join, and the checkbox offering it appears only once the preview
+says that is what this is.
+
 ### Signing in
 
 A hosted instance requires a username and password. The built-in account is
@@ -257,6 +338,54 @@ committed, so every clone knows the account and shares its password; a
 deployment must set `DATAQ_USERS` or `DATAQ_AUTH_TOKEN` of its own, and the app
 refuses to start otherwise rather than going live on a credential that is not a
 secret.
+
+### Going back to an earlier version
+
+`POST /api/datasets/{id}/revert` with `{"version": n}`, or **Restore** on the row
+in the dataset page's version list. A transform that turned out wrong does not
+have to be re-imported around.
+
+The revert **copies the old version forward as a new one** rather than moving a
+pointer back — "revert as a new commit". Three properties of how versions are
+stored make that the only honest option:
+
+- Version numbers are handed out by `next_version` and never reused, and every
+  step records the number it wrote. Moving `latest_version` backwards would
+  point the next write at a number some step's provenance already claims.
+- A version owns its bytes; deleting one drops them. Two version rows sharing a
+  `StoredRef` would mean deleting either destroys the other's data.
+- History stays append-only, so the version you came *from* is still there
+  afterwards, and reverting the revert is the same operation again.
+
+It runs as a job, like the transform it undoes: copying every row is not
+something to hold a request open for, and it means a revert appears in the job
+list, can be cancelled, and blocks a delete while it runs.
+
+The column metadata is copied, not recomputed. The bytes are identical, so
+re-profiling would spend a full scan to rediscover what the catalog already
+holds — and would lose the parts that cannot be recomputed at all: a pinned
+semantic type is a decision somebody made, and an import warning is a fact about
+text that no longer exists.
+
+### Deleting a version
+
+`DELETE /api/datasets/{id}/versions/{n}`, or **Delete** on the row. Frees the
+stored bytes for one version and leaves its neighbours alone; the step that
+produced it stays in the lineage, because deleting data is not the same as
+forgetting it happened.
+
+Two versions are refused, for different reasons:
+
+- **The only one.** A dataset with no data lists in the UI, reports zero rows,
+  and can be neither queried nor explained — the ghost the operations layer
+  works to avoid. Delete the dataset itself.
+- **The current one.** It is what every query, chart and dashboard resolves to,
+  and its number is the high-water mark the next write counts from. Restore the
+  version you want first; that writes a new current version, and this one
+  becomes an ordinary older version you can delete.
+
+The second refusal costs a step, not an outcome: restore-then-delete reaches
+every state, and keeps version numbers meaning one thing forever.
 
 ### Deleting a dataset
 
@@ -354,12 +483,16 @@ the new rows.
 
 ```
 GET  /api/plugins?kind=&mode=&applicable_to=   what can I do with this dataset?
-POST /api/operations                           import | transform | aggregate | join -> 202 job
+POST /api/operations                           import | transform | aggregate | join | revert -> 202 job
 POST /api/inspect                              synchronous twin for viz/suggesters
 GET  /api/jobs/{id}  /{id}/stream  /{id}/cancel
 GET  /api/datasets/tree              datasets nested by derivation
 GET  /api/datasets/{id}/related      immediate parents and derived children
 GET  /api/datasets/{id}/profile | versions | lineage | suggestions
+GET  /api/datasets/{id}/join-candidates   what could this be joined to?
+POST /api/datasets/{id}/join-preview      what would this join do? (no job)
+POST /api/datasets/{id}/revert       restore an earlier version, as a new one -> 202 job
+DEL  /api/datasets/{id}/versions/{n} delete one version and free its bytes
 POST /api/query      POST /api/query/sql
 GET/POST /api/dashboards
 ```
@@ -503,8 +636,9 @@ it. Everything else runs without one.
 
 Implemented and tested: import, profiling and semantic typing, transforms in all
 three execution modes, the query layer, charts and maps, aggregates, joins, the
-typed chart grammar, the timeline view, the dashboard, the agent, and a
-Railway deployment with data decoupled from code.
+typed chart grammar, the timeline view, the dashboard, version history with
+revert and per-version deletion, the agent, and a Railway deployment with data
+decoupled from code.
 
 The agent's tool surface and loop mechanics are covered by tests using a scripted
 model client (tool dispatch, the `tool_result` round-trip, parallel calls, refusals,

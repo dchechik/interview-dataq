@@ -82,6 +82,26 @@ class ColumnRow(SQLModel, table=True):
     warning: str | None = None
 
 
+class SemanticTypeRow(SQLModel, table=True):
+    """A meaning somebody defined, because no detector could.
+
+    Kept in the catalog rather than in code because it is data about *this*
+    installation's datasets: that ``pc`` and ``device`` both mean a machine name
+    is a fact about one organisation's exports, not about DataQ. Built-in types
+    are not stored here -- only the additions.
+    """
+
+    __tablename__ = "semantic_types"
+
+    id: str = Field(primary_key=True)          # "machine.name"
+    title: str = ""
+    parent: str | None = None
+    role: str = "dimension"
+    joinable: bool = True
+    description: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class JobRow(SQLModel, table=True):
     __tablename__ = "jobs"
 

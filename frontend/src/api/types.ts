@@ -74,6 +74,19 @@ export interface RelatedDataset {
   row_count?: number
 }
 
+/** One materialised version of a dataset. */
+export interface DatasetVersion {
+  version: number
+  row_count: number
+  created_at: string
+  produced_by_step: string
+  columns: number
+  bytes: number
+  /** What every query, chart and dashboard reads. Decided by the backend, which
+      owns the rule about which versions may be reverted to or deleted. */
+  is_current: boolean
+}
+
 /** What a delete actually removed. */
 export interface DeleteResult {
   deleted: string[]
@@ -107,6 +120,20 @@ export interface FormatCandidate {
   example_output: string
   /** Set when another format fits equally well and disagrees about the date. */
   conflict: string | null
+}
+
+/** A meaning a column can carry. Built in, or defined by someone here. */
+export interface SemanticType {
+  id: string
+  title: string
+  parent: string | null
+  role: string
+  joinable: boolean
+  description: string
+  /** False for the types plugins are written against; those cannot be edited. */
+  custom: boolean
+  /** How many columns carry it. Only counted for custom types. */
+  in_use: number
 }
 
 export interface SemanticGuess {
@@ -390,6 +417,49 @@ export interface Job {
   created_at: string
   finished_at: string | null
   steps?: JobStep[]
+}
+
+/** A column pair that could be part of a join key, and why it could. */
+export interface JoinKeyCandidate {
+  left: string
+  right: string
+  semantic_type: string
+  reason: string
+}
+
+/** A dataset worth joining to, with the pairs that make it joinable. */
+export interface JoinCandidate {
+  dataset_id: string
+  name: string
+  kind: string
+  row_count: number
+  keys: JoinKeyCandidate[]
+}
+
+/**
+ * What a join would do, measured before it runs. `result_rows` is exact when
+ * the right side is unique on the key and an estimate otherwise — which is
+ * exactly when it is worth reading.
+ */
+export interface JoinPreview {
+  left_rows: number
+  right_rows: number
+  sampled: number
+  matched: number
+  duplicate_keys: number
+  result_rows: number
+  exact: boolean
+  columns_added: string[]
+  collisions: string[]
+  fanout: boolean
+  notes: string[]
+}
+
+export interface JoinPreviewRequest {
+  right_dataset_id: string
+  params: Record<string, unknown>
+  left_version?: number | null
+  right_version?: number | null
 }
 
 export interface OperationRequest {

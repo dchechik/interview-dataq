@@ -19,6 +19,7 @@ the same code.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -57,6 +58,47 @@ SETTLE_ROWS = 200_000
 
 class PlanError(ValueError):
     """The plan cannot be carried out as written."""
+
+
+_CSV_ERROR_LINE = re.compile(r"CSV Error on Line:\s*(\d+)")
+
+
+def explain_read_error(exc: Exception) -> str | None:
+    """A malformed-row failure, said in a sentence. None if it is not one.
+
+    DuckDB's own message is accurate and unusable: the useful three lines are
+    followed by a list of flag names to set (``strict_mode=false``,
+    ``null_padding=true``, ``ignore_errors=true``) and then a dump of every
+    setting the sniffer auto-detected. Someone reading that in a browser has
+    been handed a fix they have no way to apply -- the flags are reader
+    parameters, and nothing in the UI ever sent one.
+
+    So the flags come out and the choice goes in. What is left is where the
+    problem is, what it is, and the fact that there is now a control for it.
+    """
+    text = str(exc)
+    match = _CSV_ERROR_LINE.search(text)
+    if match is None:
+        return None
+    # Everything before DuckDB's flag suggestions: the offending text, then
+    # what was wrong with it. The first line is the one the regex matched.
+    detail = [ln.strip() for ln in
+              text.split("Possible fixes:", 1)[0].splitlines()[1:] if ln.strip()]
+    original = next((ln[len("Original Line:"):].strip() for ln in detail
+                     if ln.startswith("Original Line:")), "")
+    reason = next((ln for ln in detail if not ln.startswith("Original Line:")), "")
+
+    parts = [f"Line {match.group(1)} does not match the columns the rest of the "
+             f"file uses"]
+    if reason:
+        parts.append(f" ({reason.rstrip('.')})")
+    parts.append(".")
+    if original:
+        shown = original if len(original) <= 120 else original[:117] + "..."
+        parts.append(f' The line reads: "{shown}".')
+    parts.append(" Choose what to do with rows like this -- keep them, or skip "
+                 "them -- and read the file again.")
+    return "".join(parts)
 
 
 class ColumnPlan(BaseModel):
@@ -191,7 +233,11 @@ def validate_plan(plans: list[ColumnPlan], known: set[str]) -> None:
 
         if plan.semantic_type and SEMANTIC_TYPES.get(plan.semantic_type) is None:
             raise PlanError(
-                f"{plan.name}: unknown semantic type {plan.semantic_type!r}")
+                f"{plan.name}: unknown semantic type {plan.semantic_type!r}. "
+                "Define it first (POST /api/semantic-types) if it is a meaning "
+                "of your own -- it needs a parent so that plugins written for "
+                "the parent still accept the column."
+            )
         if plan.role and plan.role == "time":
             # profile_columns copies a pinned role verbatim, so a pinned
             # role="time" on a text column recreates the VARCHAR - INTERVAL

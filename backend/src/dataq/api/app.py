@@ -36,9 +36,16 @@ from ..services import datasets as dataset_service
 from ..services import feature_plan as feature_plan_service
 from ..services import import_plan
 from ..services import inspect as inspect_service
+from ..services import join_plan as join_plan_service
 from ..services import lineage as lineage_service
+from ..services import semantic_types as semantic_type_service
 from ..services.context import AppContext, build_context
-from ..services.operations import OperationAccepted, OperationRequest, submit_operation
+from ..services.operations import (
+    DatasetInput,
+    OperationAccepted,
+    OperationRequest,
+    submit_operation,
+)
 from ..services.query import run_query, run_sql
 from . import users
 from .auth import TokenAuthMiddleware, check_settings
@@ -134,9 +141,36 @@ class PreviewRequest(BaseModel):
     limit: int = 20
 
 
+class SemanticTypeRequest(BaseModel):
+    """A meaning somebody is defining, because no detector could."""
+
+    id: str
+    title: str | None = None
+    # Required in effect: a type descending from nothing matches no plugin's
+    # accepted types, so the column would end up less usable than unlabelled.
+    parent: str = semantic_type_service.DEFAULT_PARENT
+    role: str | None = None
+    joinable: bool = True
+    description: str = ""
+
+
 class AgentChatRequest(BaseModel):
     message: str
     history: list[dict[str, Any]] = []
+
+
+class RevertRequest(BaseModel):
+    version: int
+
+
+class JoinPreviewRequest(BaseModel):
+    """The right-hand side and the join's own params, so a preview is the
+    operation minus the writing."""
+
+    right_dataset_id: str
+    params: dict[str, Any] = {}
+    left_version: int | None = None
+    right_version: int | None = None
 
 
 class DashboardRequest(BaseModel):
@@ -189,11 +223,44 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - a flat route table
     def semantic_types() -> list[dict]:
         from ..core.semantic import SEMANTIC_TYPES
 
+        ctx = context()
         return [
             {"id": t.id, "title": t.title, "parent": t.parent, "role": t.role,
-             "joinable": t.joinable, "description": t.description}
+             "joinable": t.joinable, "description": t.description,
+             "custom": not SEMANTIC_TYPES.is_builtin(t.id),
+             # Only for custom types: the delete affordance needs to know, and
+             # counting usage for all 17 built-ins on every schema render would
+             # be seventeen queries nobody reads.
+             "in_use": (0 if SEMANTIC_TYPES.is_builtin(t.id)
+                        else len(semantic_type_service.usage(ctx.catalog, t.id)))}
             for t in SEMANTIC_TYPES.all()
         ]
+
+    @app.post("/api/semantic-types")
+    def create_semantic_type(req: SemanticTypeRequest) -> dict:
+        """Define a meaning nothing detects, or edit one already defined."""
+        from ..core.semantic import SemanticTypeError
+
+        try:
+            st = semantic_type_service.define(
+                context().catalog, req.id, title=req.title, parent=req.parent,
+                role=req.role, joinable=req.joinable, description=req.description,
+            )
+        except SemanticTypeError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"id": st.id, "title": st.title, "parent": st.parent,
+                "role": st.role, "joinable": st.joinable,
+                "description": st.description, "custom": True, "in_use": 0}
+
+    @app.delete("/api/semantic-types/{type_id}")
+    def delete_semantic_type(type_id: str) -> dict:
+        from ..core.semantic import SemanticTypeError
+
+        try:
+            semantic_type_service.remove(context().catalog, type_id)
+        except SemanticTypeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"deleted": type_id}
 
     # --- sources & datasets ----------------------------------------------
     @app.post("/api/sources/preview")
@@ -216,7 +283,8 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - a flat route table
                 columns = list(rel.columns)
                 types = [str(t) for t in rel.types]
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            raise HTTPException(400, f"{type(exc).__name__}: {exc}") from exc
+            hint = import_plan.explain_read_error(exc)
+            raise HTTPException(400, hint or f"{type(exc).__name__}: {exc}") from exc
         return {"reader": reader_cls.id, "columns": columns, "types": types,
                 "rows": [list(r) for r in rows]}
 
@@ -242,7 +310,11 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - a flat route table
         except import_plan.PlanError as exc:
             raise HTTPException(400, str(exc)) from exc
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            raise HTTPException(400, f"{type(exc).__name__}: {exc}") from exc
+            # A row the reader cannot parse is the one failure here with a fix
+            # the user can apply, so it is reported as that rather than as a
+            # stack of DuckDB settings.
+            hint = import_plan.explain_read_error(exc)
+            raise HTTPException(400, hint or f"{type(exc).__name__}: {exc}") from exc
         return plan.model_dump()
 
     @app.get("/api/sources/browse")
@@ -366,6 +438,38 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - a flat route table
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    @app.get("/api/datasets/{dataset_id}/join-candidates")
+    def join_candidates(dataset_id: str) -> list[dict]:
+        """Datasets this one could be joined to, and the pairs that make it so.
+
+        Reads profiles only, so it costs nothing and can be asked as the join
+        form opens. Joining to something not listed here stays possible -- the
+        semantic layer proposes, it does not gate.
+        """
+        try:
+            found = join_plan_service.candidates(context(), dataset_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return [c.model_dump() for c in found]
+
+    @app.post("/api/datasets/{dataset_id}/join-preview")
+    def join_preview(dataset_id: str, req: JoinPreviewRequest) -> dict:
+        """What the join described by these params would do, before running it.
+
+        Takes the operation's own ``params``, so what is measured is what would
+        run. Cheap enough to ask on every change to the key: two counts, one
+        GROUP BY over the right side, and a bounded probe of the join itself.
+        """
+        try:
+            return join_plan_service.preview(
+                context(), dataset_id, req.right_dataset_id, req.params,
+                left_version=req.left_version, right_version=req.right_version,
+            ).model_dump()
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     @app.get("/api/datasets/{dataset_id}/dependents")
     def dataset_dependents(dataset_id: str) -> list[dict]:
         """What a delete would take with it. The UI asks before confirming."""
@@ -382,12 +486,56 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - a flat route table
     @app.get("/api/datasets/{dataset_id}/versions")
     def list_versions(dataset_id: str) -> list[dict]:
         ctx = context()
+        rows = ctx.catalog.list_versions(dataset_id)
+        # Which one is current is a property of the list, not of a row, and the
+        # UI needs it on every row to decide what may be reverted or deleted.
+        # Deriving it in the browser from "the largest number" would put that
+        # rule in two places.
+        newest = rows[0].version if rows else 0
         return [
             {"version": v.version, "row_count": v.row_count,
              "created_at": v.created_at.isoformat(), "produced_by_step": v.produced_by_step,
-             "columns": len(v.columns_schema)}
-            for v in ctx.catalog.list_versions(dataset_id)
+             "columns": len(v.columns_schema),
+             "bytes": int(v.stored_ref.get("bytes", 0) or 0),
+             "is_current": v.version == newest}
+            for v in rows
         ]
+
+    @app.post("/api/datasets/{dataset_id}/revert", response_model=OperationAccepted,
+              status_code=202)
+    def revert_dataset(dataset_id: str, req: RevertRequest) -> OperationAccepted:
+        """Bring an earlier version back, as a new version.
+
+        A job rather than a synchronous call: it copies every row, which on a
+        large dataset is not something to hold a request open for. It also means
+        a revert shows up in the job list, can be cancelled, and blocks a delete
+        while it runs -- exactly like the transform it is undoing.
+        """
+        ctx = context()
+        if ctx.catalog.get_dataset(dataset_id) is None:
+            raise HTTPException(404, "dataset not found")
+        if ctx.catalog.get_version(dataset_id, req.version) is None:
+            raise HTTPException(404, f"no version {req.version} of this dataset")
+        return submit_operation(ctx, OperationRequest(
+            op="revert",
+            inputs=[DatasetInput(dataset_id=dataset_id, version=req.version)],
+        ))
+
+    @app.delete("/api/datasets/{dataset_id}/versions/{version}")
+    def delete_version(dataset_id: str, version: int) -> dict:
+        """Delete one version and the stored bytes behind it.
+
+        409 for the two it refuses -- the only version, and the current one --
+        each with the alternative in the message.
+        """
+        try:
+            result = dataset_service.delete_version(context(), dataset_id, version)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except dataset_service.DeleteRefused as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"dataset_id": result.dataset_id, "version": result.version,
+                "bytes_freed": result.bytes_freed}
 
     @app.get("/api/datasets/{dataset_id}/profile", response_model=DatasetProfile)
     def get_profile(dataset_id: str, version: int | None = None) -> DatasetProfile:

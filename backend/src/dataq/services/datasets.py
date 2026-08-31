@@ -33,6 +33,15 @@ class DeleteRefused(ValueError):
 
 
 @dataclass
+class DeletedVersion:
+    """What deleting one version removed."""
+
+    dataset_id: str
+    version: int
+    bytes_freed: int = 0
+
+
+@dataclass
 class Deleted:
     """What a delete actually removed."""
 
@@ -147,3 +156,70 @@ def delete_dataset(ctx: AppContext, dataset_id: str, cascade: bool = False) -> D
             ctx.catalog.delete_dataset(target)
             out.datasets.append({"id": target, "name": row.name, "kind": row.kind})
     return out
+
+
+def delete_version(ctx: AppContext, dataset_id: str, version: int) -> DeletedVersion:
+    """Delete one version of a dataset, and the bytes behind it.
+
+    Two versions are refused, and the reasons are different:
+
+    * **The only one.** A dataset with no version cannot be queried, profiled or
+      explained -- it is the ghost that :func:`_new_dataset` exists to prevent.
+      Deleting the data means deleting the dataset, so it says so.
+    * **The newest one.** It is what every query, chart and dashboard resolves
+      to, so removing it silently changes what the dataset means. It is also the
+      number ``next_version`` allocates from, and those numbers are never
+      reused: dropping the newest would either strand the high-water mark above
+      anything that exists, or hand the next write a number an existing step's
+      provenance already refers to. Revert to the version you want first -- that
+      writes a new newest -- and this one is then an ordinary older version.
+
+    Together with revert, that is still complete: any state you can describe is
+    reachable by reverting forward and pruning behind.
+    """
+    dataset = ctx.catalog.get_dataset(dataset_id)
+    if dataset is None:
+        raise KeyError(f"unknown dataset: {dataset_id}")
+
+    versions = ctx.catalog.list_versions(dataset_id)  # newest first
+    target = next((v for v in versions if v.version == version), None)
+    if target is None:
+        raise KeyError(f"{dataset.name} has no version {version}")
+
+    if len(versions) == 1:
+        raise DeleteRefused(
+            f"v{version} is the only version of {dataset.name}, and a dataset "
+            "with no data cannot be queried or explained. Delete the dataset "
+            "itself instead."
+        )
+    if version == versions[0].version:
+        raise DeleteRefused(
+            f"v{version} is the current version of {dataset.name} -- every "
+            "query, chart and dashboard reads it. Revert to the version you "
+            "want first; that writes a new current version, and this one "
+            "becomes an ordinary older version you can delete."
+        )
+
+    busy = _active_jobs(ctx, {dataset_id})
+    if busy:
+        raise DeleteRefused(
+            f"a job is still running against this data ({busy[0]}). Wait for it "
+            "or cancel it first -- deleting now would leave it writing to files "
+            "that no longer exist."
+        )
+
+    stored = StoredRef(**target.stored_ref)
+    with ctx.warehouse.cur() as conn:
+        try:
+            with ctx.warehouse.ddl_lock:
+                ctx.storage.drop(stored, conn)
+        except Exception as exc:  # noqa: BLE001
+            # Same order as delete_dataset: the row outlives a failed drop, so
+            # the bytes still have something pointing at them.
+            raise DeleteRefused(
+                f"could not remove the stored data for {dataset.name} "
+                f"v{version}: {exc}"
+            ) from exc
+    ctx.catalog.delete_version(target.id)
+    return DeletedVersion(dataset_id=dataset_id, version=version,
+                          bytes_freed=stored.bytes)

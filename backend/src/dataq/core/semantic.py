@@ -7,13 +7,34 @@ how it is stored ("VARCHAR"). Semantic types form a hierarchy, so a rule written
 This registry is what makes join suggestion, chart suggestion and normalization
 automatic rather than hand-wired: plugins declare which semantic types they accept
 and produce, and the suggesters match columns across datasets by type.
+
+The built-in types below are the ones DataQ can *detect*. They are not meant to be
+the whole vocabulary: no detector will ever recognise a fleet's machine names or an
+internal cost-centre code, and a dataset full of columns nothing recognises is a
+dataset nothing can suggest anything about. So the registry also holds *custom*
+types, defined by a person and persisted in the catalog -- see
+``services.semantic_types``. Saying that ``pc`` here and ``device`` there both mean
+``machine.name`` is what makes the two joinable, and it is a claim only a person can
+make.
+
+Custom types are ordinary members of the hierarchy: they name a parent, inherit
+matching from it, and are indistinguishable to every consumer. Only two things
+separate them -- they can be edited and deleted, and they are never produced by a
+detector.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from .types import ColumnRole
+
+# A custom type's id. Dotted segments are a naming convention rather than a
+# structure -- ``geo.lat`` has parent ``numeric``, not ``geo`` -- but they read
+# well and keep a vocabulary sorted into families.
+TYPE_ID_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$")
+MAX_TYPE_ID_LENGTH = 64
 
 
 @dataclass(frozen=True)
@@ -31,9 +52,14 @@ class SemanticType:
     physical: tuple[str, ...] = field(default_factory=tuple)
 
 
+class SemanticTypeError(ValueError):
+    """A custom type cannot mean what it says."""
+
+
 class SemanticTypeRegistry:
     def __init__(self) -> None:
         self._types: dict[str, SemanticType] = {}
+        self._builtins: frozenset[str] = frozenset()
 
     def register(self, st: SemanticType) -> SemanticType:
         if st.id in self._types:
@@ -42,6 +68,69 @@ class SemanticTypeRegistry:
             raise ValueError(f"unknown parent {st.parent!r} for semantic type {st.id!r}")
         self._types[st.id] = st
         return st
+
+    # --- built-in vs custom ------------------------------------------------
+    def seal_builtins(self) -> None:
+        """Everything registered so far is built in; anything later is custom.
+
+        Called once at the bottom of this module. The distinction matters in
+        exactly two places: a person may edit or delete their own types but not
+        the ones plugins are written against, and only custom types need loading
+        from the catalog at start-up.
+        """
+        self._builtins = frozenset(self._types)
+
+    def is_builtin(self, type_id: str) -> bool:
+        return type_id in self._builtins
+
+    def custom(self) -> list[SemanticType]:
+        return [t for t in self._types.values() if t.id not in self._builtins]
+
+    def add_custom(self, st: SemanticType) -> SemanticType:
+        """Register a person-defined type, replacing one of the same id.
+
+        Replacement rather than refusal because this is an edit surface: a type
+        defined with the wrong parent should be correctable without first being
+        deleted out from under the columns using it.
+        """
+        self.validate_custom(st)
+        self._types[st.id] = st
+        return st
+
+    def validate_custom(self, st: SemanticType) -> None:
+        if st.id in self._builtins:
+            raise SemanticTypeError(
+                f"{st.id!r} is a built-in type and cannot be redefined")
+        if len(st.id) > MAX_TYPE_ID_LENGTH:
+            raise SemanticTypeError(
+                f"{st.id!r} is too long; {MAX_TYPE_ID_LENGTH} characters at most")
+        if not TYPE_ID_RE.match(st.id):
+            raise SemanticTypeError(
+                f"{st.id!r} is not a usable id. Use lowercase words separated by "
+                "dots or underscores, starting with a letter -- for example "
+                "'machine.name' or 'cost_centre'."
+            )
+        if st.parent is not None:
+            if st.parent not in self._types:
+                raise SemanticTypeError(
+                    f"unknown parent {st.parent!r} for {st.id!r}; "
+                    f"known types: {', '.join(sorted(self._types)[:12])}"
+                )
+            # Walking up from the parent must terminate somewhere other than
+            # here, or matching this type would depend on itself.
+            if st.id in self.ancestry(st.parent):
+                raise SemanticTypeError(
+                    f"{st.parent!r} already descends from {st.id!r}; "
+                    "a type cannot be its own ancestor"
+                )
+
+    def reset_custom(self) -> None:
+        """Forget every custom type. The registry is a process-wide singleton,
+        so this is how a new catalog -- a different data directory, or the next
+        test -- avoids inheriting the last one's vocabulary."""
+        for type_id in list(self._types):
+            if type_id not in self._builtins:
+                del self._types[type_id]
 
     def get(self, type_id: str) -> SemanticType | None:
         return self._types.get(type_id)
@@ -140,3 +229,9 @@ _r("numeric.share", "Share", parent="numeric", role="measure",
    description="Fraction of rows holding this value; small means rare")
 _r("numeric.rarity", "Rarity", parent="numeric", role="measure",
    description="Inverse of share; large means rare")
+
+
+
+# Everything above is built in and immutable; everything registered from here on
+# is somebody's own vocabulary, loaded from the catalog.
+SEMANTIC_TYPES.seal_builtins()
