@@ -67,6 +67,17 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("DATAQ_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"),
     )
+    # Which workspace a request bills to. Only needed for a key that is not
+    # scoped to one: personal and service-account keys act as an identity that
+    # may reach several workspaces, so the API cannot infer which, and answers
+    # a request without this header with a 400. A key created for a single
+    # workspace carries the answer itself and needs nothing here.
+    anthropic_workspace_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "DATAQ_ANTHROPIC_WORKSPACE_ID", "ANTHROPIC_WORKSPACE_ID"
+        ),
+    )
     model: str = "claude-opus-5"
 
     # Built frontend bundle. Served at / when present, so production is a single

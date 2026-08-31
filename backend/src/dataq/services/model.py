@@ -32,7 +32,17 @@ class AnthropicModelClient:
         from anthropic import AsyncAnthropic
 
         self.settings = settings
-        self._client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+        # The SDK reads ANTHROPIC_WORKSPACE_ID only on the Workload Identity
+        # Federation path, never for an API key, so an identity-linked key needs
+        # the header set here or every call comes back 400.
+        headers = (
+            {"anthropic-workspace-id": settings.anthropic_workspace_id}
+            if settings.anthropic_workspace_id
+            else None
+        )
+        self._client = AsyncAnthropic(
+            api_key=settings.anthropic_api_key, default_headers=headers
+        )
 
     async def complete(
         self, *, system: str, prompt: str, output_schema: dict | None = None, **kwargs: Any

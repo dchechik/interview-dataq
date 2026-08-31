@@ -66,9 +66,10 @@ export function QueryPage() {
       const compiled = (await api.compileSql(spec)).sql
       seededSql.current = compiled
       setSql(compiled)
-    } catch {
-      // A spec that will not compile (no columns loaded yet, say) is not worth
-      // an error banner over: the editor simply stays as it was.
+    } catch (e) {
+      // Say so rather than swallowing it: a seed that quietly fails to arrive
+      // is indistinguishable from the feature not existing.
+      setError(e instanceof ApiError ? e.message : String(e))
     }
   }
 

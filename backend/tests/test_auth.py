@@ -104,6 +104,9 @@ def test_health_stays_public(client):
         ("get", "/api/sources/browse"),
         ("post", "/api/query/sql"),
         ("post", "/api/agent/estimate"),
+        # The streaming twin. Left out, it was the one route the UI called
+        # without a credential and the one route nothing asserted needed one.
+        ("post", "/api/agent/chat"),
         ("post", "/api/operations"),
     ],
 )

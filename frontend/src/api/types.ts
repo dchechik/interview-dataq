@@ -374,6 +374,13 @@ export interface RenderedViz {
   truncated: boolean
 }
 
+/** One tool the agent may call. The description is what the model was told it does. */
+export interface AgentTool {
+  name: string
+  description: string
+  scope: 'read_only' | 'full'
+}
+
 export interface AgentEstimate {
   input_tokens: number
   /** True when counted by the API rather than approximated locally. */

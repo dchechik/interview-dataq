@@ -1,5 +1,6 @@
 import type {
   AgentEstimate,
+  AgentTool,
   BrowseResult,
   Dashboard,
   DatasetNode,
@@ -90,7 +91,22 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/**
+ * One request, carrying the credential, with the shared failure handling — and
+ * stopping short of decoding the body.
+ *
+ * Split out of `request` for a single caller: the agent's chat stream. That one
+ * is SSE over POST, so it can use neither of the two paths this file already
+ * had. `EventSource` cannot send a body or choose a method (which is why
+ * `useJobWatcher` reaches for `withToken` instead), and `request` decodes JSON,
+ * where the whole point is to read the response incrementally.
+ *
+ * With nowhere to put it, that call ended up as a bare `fetch` in the page —
+ * the one request in the app that sent no token. It 401'd the moment any
+ * credential was configured, and, having no error handling either, it did so
+ * silently. Hence a seam rather than a header copied to the call site.
+ */
+async function authorizedFetch(path: string, init?: RequestInit): Promise<Response> {
   // FormData must set its own Content-Type so the multipart boundary is included;
   // forcing application/json here would make the upload unparseable.
   const isForm = init?.body instanceof FormData
@@ -122,6 +138,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ApiError(detail, res.status)
   }
+  return res
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await authorizedFetch(path, init)
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
 }
@@ -246,8 +267,21 @@ export const api = {
   }) => post<RenderedViz>('/inspect', req),
 
   // --- agent ---
+  /** The agent's tool surface, with the descriptions the model itself was given. */
+  agentTools: () => request<AgentTool[]>('/agent/tools'),
   agentEstimate: (message: string, history: unknown[] = []) =>
     post<AgentEstimate>('/agent/estimate', { message, history }),
+  /**
+   * The agent's work, streamed as SSE. Returns the raw Response: the caller
+   * reads the stream, because the frames it carries are the caller's type.
+   * A non-ok status throws ApiError here, so a rejected request surfaces as an
+   * error rather than as an empty stream nobody reports.
+   */
+  agentChat: (message: string, history: unknown[] = []) =>
+    authorizedFetch('/agent/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message, history }),
+    }),
 
   // --- query ---
   query: (spec: QuerySpec) => post<QueryResult>('/query', spec),
