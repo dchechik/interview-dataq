@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import { api, ApiError } from '../api/client'
@@ -24,6 +24,9 @@ export function QueryPage() {
   const [sql, setSql] = useState('')
   const [result, setResult] = useState<QueryResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // The last text we put in the SQL box ourselves, so we can tell our own
+  // seed from something you typed and only ever overwrite the former.
+  const seededSql = useRef('')
 
   const columns = profile?.columns.map((c) => c.name) ?? []
 
@@ -48,6 +51,27 @@ export function QueryPage() {
     [mode, sql, limit, id, page, filters, groupBy, selects],
   )
 
+  // Builder → SQL hands over the query you have built so far, so the SQL tab
+  // opens on your work rather than a blank box: the same spec the Run button
+  // would send, compiled by the backend (only it knows the source table) with
+  // its literals inlined so the text is runnable as-is.
+  const switchMode = async (m: typeof mode) => {
+    const from = mode
+    setMode(m)
+    setResult(null)
+    setError(null)
+    if (m !== 'sql' || from !== 'builder') return
+    if (sql !== '' && sql !== seededSql.current) return // you have edited it; leave it be
+    try {
+      const compiled = (await api.compileSql(spec)).sql
+      seededSql.current = compiled
+      setSql(compiled)
+    } catch {
+      // A spec that will not compile (no columns loaded yet, say) is not worth
+      // an error banner over: the editor simply stays as it was.
+    }
+  }
+
   // Raw rows load on arrival and whenever the page changes, so exploring is just
   // clicking Next rather than composing a query first.
   useEffect(() => {
@@ -67,11 +91,7 @@ export function QueryPage() {
             <button
               key={m}
               type="button"
-              onClick={() => {
-                setMode(m)
-                setResult(null)
-                setError(null)
-              }}
+              onClick={() => void switchMode(m)}
               className={`px-3 py-1 text-sm ${
                 mode === m ? 'bg-slate-900 text-white' : 'text-slate-600'
               }`}

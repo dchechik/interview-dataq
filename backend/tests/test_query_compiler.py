@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from dataq.query.compiler import QueryCompiler, QueryError, ResolvedSource
+from dataq.query.compiler import QueryCompiler, QueryError, ResolvedSource, inline_params
 from dataq.query.spec import Filter, QuerySpec, Select, Sort, TimeBucket
 
 SRC = ResolvedSource(
@@ -103,3 +103,43 @@ def test_order_by_must_reference_output_column(compiler):
 def test_star_only_valid_with_count(compiler):
     with pytest.raises(QueryError, match="only valid with count"):
         compiler.compile(QuerySpec(dataset="d", select=[Select(column="*", agg="sum")]))
+
+
+def test_inline_params_produces_runnable_sql(compiler):
+    """The display form of a compiled query: literals back in, no ? left."""
+    c = compiler.compile(
+        QuerySpec(
+            dataset="d",
+            filters=[
+                Filter(column="country", op="in", value=["FR", "DE"]),
+                Filter(column="amount", op=">", value=10),
+            ],
+            limit=25,
+        )
+    )
+    sql = inline_params(c.sql, c.params)
+    assert "?" not in sql
+    assert """"country" IN ('FR', 'DE')""" in sql
+    assert '"amount" > 10' in sql
+    assert sql.endswith("LIMIT 25")
+
+
+def test_inline_params_quotes_hostile_literals(compiler):
+    c = compiler.compile(
+        QuerySpec(dataset="d", filters=[Filter(column="country", value="'; DROP TABLE x;--")])
+    )
+    # Escaped into one string literal, so the quote cannot close the string and
+    # the rest cannot become statements of its own.
+    assert """"country" = '''; DROP TABLE x;--'""" in inline_params(c.sql, c.params)
+
+
+def test_inline_params_ignores_question_marks_inside_quotes():
+    sql = """SELECT "why?" FROM read_parquet('/tmp/a?b.parquet') WHERE "why?" = ?"""
+    assert inline_params(sql, ["x"]).endswith("""WHERE "why?" = 'x'""")
+
+
+def test_inline_params_rejects_a_mismatched_count():
+    with pytest.raises(QueryError):
+        inline_params("SELECT ?", [])
+    with pytest.raises(QueryError):
+        inline_params("SELECT 1", ["extra"])

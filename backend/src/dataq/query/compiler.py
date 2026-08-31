@@ -11,6 +11,7 @@ Together these mean a malicious or confused spec cannot inject SQL.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -98,6 +99,48 @@ class SourceResolver(Protocol):
 
 def quote_ident(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
+
+
+def quote_literal(value: Any) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def inline_params(sql: str, params: Sequence[Any]) -> str:
+    """Fold bound parameters back into the SQL, as quoted literals.
+
+    Compilation binds every literal as a ``?`` so nothing user-supplied reaches
+    the parser as text. That is exactly wrong for *showing* someone the query:
+    a bare ``?`` will not run. This is the display form -- what the SQL editor
+    is seeded with when you carry a built query over to it -- so it goes back
+    through :func:`quote_literal` rather than through the parameter binder.
+
+    Placeholders inside quoted strings and identifiers are left alone, since a
+    literal path or a column named ``why?`` is not a parameter slot.
+    """
+    out: list[str] = []
+    remaining = list(params)
+    quote: str | None = None
+    for ch in sql:
+        if quote is not None:
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "?":
+            if not remaining:
+                raise QueryError("more placeholders than parameters")
+            out.append(quote_literal(remaining.pop(0)))
+            continue
+        out.append(ch)
+    if remaining:
+        raise QueryError("more parameters than placeholders")
+    return "".join(out)
 
 
 @dataclass

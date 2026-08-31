@@ -29,7 +29,7 @@ from ..db import UnsafeSQLError
 from ..jobs.runner import ThreadPoolJobRunner
 from ..plugins.base import REGISTRY, PluginDescriptor
 from ..plugins.builtin.readers import pick_reader
-from ..query.compiler import QueryError
+from ..query.compiler import QueryError, inline_params
 from ..query.spec import QueryResult, QuerySpec
 from ..services import browse as browse_service
 from ..services import datasets as dataset_service
@@ -124,6 +124,10 @@ class LoginRequest(BaseModel):
 class SqlRequest(BaseModel):
     sql: str
     limit: int = 1000
+
+
+class CompiledSql(BaseModel):
+    sql: str
 
 
 class InspectRequest(BaseModel):
@@ -645,6 +649,17 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - a flat route table
             return run_query(context(), spec)
         except QueryError as exc:
             raise HTTPException(400, str(exc)) from exc
+
+    # The SQL a spec turns into, without running it: what the UI seeds the SQL
+    # editor with when you carry a built query over to it. Literals are inlined
+    # rather than bound, because the point is text you can edit and re-run.
+    @app.post("/api/query/compile", response_model=CompiledSql)
+    def query_compile(spec: QuerySpec) -> CompiledSql:
+        try:
+            compiled = context().compiler().compile(spec)
+        except QueryError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return CompiledSql(sql=inline_params(compiled.sql, compiled.params))
 
     @app.post("/api/query/sql", response_model=QueryResult)
     def query_sql(req: SqlRequest) -> QueryResult:

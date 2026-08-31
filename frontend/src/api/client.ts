@@ -252,6 +252,8 @@ export const api = {
   // --- query ---
   query: (spec: QuerySpec) => post<QueryResult>('/query', spec),
   sql: (sql: string, limit = 1000) => post<QueryResult>('/query/sql', { sql, limit }),
+  /** The SQL a spec compiles to, literals and all, without running it. */
+  compileSql: (spec: QuerySpec) => post<{ sql: string }>('/query/compile', spec),
 
   // --- jobs ---
   jobs: (limit = 50) => request<Job[]>(`/jobs?limit=${limit}`),

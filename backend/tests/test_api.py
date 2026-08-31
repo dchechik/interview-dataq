@@ -137,6 +137,23 @@ def test_query_validation_errors_are_400(client, app_ctx, tmp_path):
     assert "unknown column" in r.json()["detail"]
 
 
+def test_compile_endpoint_returns_sql_the_sql_endpoint_will_run(client, app_ctx, tmp_path):
+    """What the UI seeds the SQL editor with has to actually run."""
+    ds = _import(client, app_ctx, write_auth_csv(tmp_path / "a.csv", rows=50), "auth")
+    spec = {"dataset": ds, "group_by": ["action"],
+            "select": [{"column": "*", "agg": "count", "alias": "n"}], "limit": 5}
+    compiled = client.post("/api/query/compile", json=spec).json()["sql"]
+    assert "?" not in compiled
+    ran = client.post("/api/query/sql", json={"sql": compiled}).json()
+    assert ran["columns"] == ["action", "n"]
+
+
+def test_compile_endpoint_validation_errors_are_400(client, app_ctx, tmp_path):
+    ds = _import(client, app_ctx, write_auth_csv(tmp_path / "a.csv", rows=50), "auth")
+    r = client.post("/api/query/compile", json={"dataset": ds, "group_by": ["nope"]})
+    assert r.status_code == 400
+
+
 def test_sql_endpoint_rejects_writes(client, app_ctx, tmp_path):
     _import(client, app_ctx, write_auth_csv(tmp_path / "a.csv", rows=50), "auth")
     assert client.post("/api/query/sql", json={"sql": "SELECT 42 AS x"}).json()["rows"] == [[42]]
