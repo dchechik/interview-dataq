@@ -470,6 +470,10 @@ class JoinParams(BaseModel):
     # Columns to bring across from the right side; empty means all non-key columns.
     right_select: list[str] = []
     prefix: str = ""
+    # A join whose right side has repeated keys multiplies rows rather than
+    # annotating them. Almost always that is a mistake -- the wrong key, or a
+    # key that needs a second column -- so it is refused unless asked for.
+    allow_fanout: bool = False
 
 
 def run_join_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
@@ -511,8 +515,26 @@ def run_join_op(ctx: AppContext, req: OperationRequest, job_ctx: JobCtx) -> str:
     ) as dataset:
         ref = VersionRef(dataset_id=dataset.id, version=1)
         with ctx.warehouse.cur() as conn:
+            left_rows = conn.execute(f"SELECT count(*) FROM {lsrc.sql}").fetchone()[0]
             with ctx.warehouse.ddl_lock:
                 stored = ctx.storage.write_relation(ref, sql, conn)
+
+            if not p.allow_fanout and stored.rows > left_rows:
+                # The right side repeats the join key, so each left row matched
+                # several and this is a multiplication rather than an
+                # annotation. Left quiet it is expensive and invisible: every
+                # count downstream is inflated and nothing says why.
+                with ctx.warehouse.ddl_lock:
+                    ctx.storage.drop(stored, conn)
+                raise ValueError(
+                    f"joining on {p.right_column} turned {left_rows:,} rows into "
+                    f"{stored.rows:,}: the right side has more than one row per "
+                    f"{p.right_column}, so each row matched several. Join on a "
+                    "column that is unique there, use enrich.features to match "
+                    "on more than one column, or pass allow_fanout to keep this."
+                )
+            job_ctx.log(f"joined {left_rows:,} rows -> {stored.rows:,}")
+
             source = ctx.storage.sql_source(stored)
             rel = conn.sql(f"SELECT * FROM {source} LIMIT 0")
             columns = list(zip(rel.columns, [str(t) for t in rel.types], strict=True))

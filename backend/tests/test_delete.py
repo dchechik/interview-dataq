@@ -40,6 +40,15 @@ def stored_locations(app_ctx, dataset_id) -> list[str]:
             for v in app_ctx.catalog.list_versions(dataset_id)]
 
 
+def run_failing(app_ctx, **kwargs):
+    """Submit an operation expected to fail; return the job."""
+    from dataq.services.operations import OperationRequest, submit_operation
+
+    accepted = submit_operation(app_ctx, OperationRequest(**kwargs))
+    app_ctx.runner.wait(accepted.job_id, timeout=120)
+    return app_ctx.catalog.get_job(accepted.job_id)
+
+
 def exists(app_ctx, location: str) -> bool:
     """Is the stored data still there, in either backend?"""
     import pathlib
@@ -293,3 +302,48 @@ def test_data_with_no_version_row_is_still_removed(app_ctx, auth):
 
     delete_dataset(app_ctx, auth)
     assert not any(exists(app_ctx, loc) for loc in locations)
+
+
+# --------------------------------------------------------------------------- #
+# a join that multiplies rows is not an annotation
+# --------------------------------------------------------------------------- #
+def test_a_join_onto_a_repeated_key_is_refused(app_ctx, run_op, auth):
+    """Joining on a key the right side repeats multiplies rows instead of
+    annotating them. Left quiet it is expensive and invisible: every count
+    downstream is inflated, and the job reports success.
+    """
+    per_country = run_op(op="aggregate", plugin_id="agg.features",
+                         inputs=[{"dataset_id": auth}],
+                         params={"by": ["country", "action"]}, output_name="pairs")
+    before = len(app_ctx.catalog.list_datasets())
+
+    job = run_failing(app_ctx, op="join",
+                      inputs=[{"dataset_id": auth}, {"dataset_id": per_country}],
+                      params={"left_column": "country", "right_column": "country",
+                              "prefix": "p_"})
+    assert job.status == "failed"
+    assert "turned" in job.error and "into" in job.error
+    assert "enrich.features" in job.error, "it names the tool that can do this"
+    assert len(app_ctx.catalog.list_datasets()) == before, "and leaves nothing behind"
+
+
+def test_a_fanout_join_can_still_be_asked_for(app_ctx, run_op, auth):
+    """Refusing outright would make a legitimate one-to-many join impossible."""
+    per_country = run_op(op="aggregate", plugin_id="agg.features",
+                         inputs=[{"dataset_id": auth}],
+                         params={"by": ["country", "action"]}, output_name="pairs")
+    out = run_op(op="join", inputs=[{"dataset_id": auth}, {"dataset_id": per_country}],
+                 params={"left_column": "country", "right_column": "country",
+                         "prefix": "p_", "allow_fanout": True})
+    assert app_ctx.catalog.get_profile(out).row_count > \
+        app_ctx.catalog.get_profile(auth).row_count
+
+
+def test_a_one_to_one_join_is_unaffected(app_ctx, run_op, auth):
+    freq = run_op(op="aggregate", plugin_id="agg.frequency",
+                  inputs=[{"dataset_id": auth}], params={"column": "country"},
+                  output_name="freq")
+    out = run_op(op="join", inputs=[{"dataset_id": auth}, {"dataset_id": freq}],
+                 params={"left_column": "country", "right_column": "country"})
+    assert app_ctx.catalog.get_profile(out).row_count == \
+        app_ctx.catalog.get_profile(auth).row_count
