@@ -68,7 +68,9 @@ def suggest(
 
     # Join suggestion needs to see the rest of the catalog.
     peers = []
+    names: dict[str, str] = {}
     for ds in ctx.catalog.list_datasets():
+        names[ds.id] = ds.name
         if ds.id == dataset_id:
             continue
         peer = ctx.catalog.get_profile(ds.id)
@@ -79,7 +81,8 @@ def suggest(
     for cls in REGISTRY.list(kind="suggester"):
         suggester: Suggester = cls()  # type: ignore[assignment]
         params = cls.parse_params({})
-        found = suggester.suggest(SuggestCtx(profile=profile, params=params, peers=peers))
+        found = suggester.suggest(
+            SuggestCtx(profile=profile, params=params, peers=peers, names=names))
         if kinds:
             found = [s for s in found if s.kind in kinds]
         out.extend(found)

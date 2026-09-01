@@ -282,6 +282,15 @@ class SuggestCtx:
     params: Any
     # Other datasets in the catalog, for cross-dataset join suggestion.
     peers: list[DatasetProfile] = field(default_factory=list)
+    # dataset_id -> catalog name. A profile carries only the id, and an id is
+    # not something a user recognises: a join suggestion that says which
+    # dataset it would pull in has to get the name from here.
+    names: dict[str, str] = field(default_factory=dict)
+
+    def label(self, dataset_id: str) -> str:
+        """How a dataset is named in suggestion text: "logon [ee60f9f6]"."""
+        name = self.names.get(dataset_id)
+        return f"{name} [{dataset_id[:8]}]" if name else dataset_id[:8]
 
 
 class Suggester(Plugin, abc.ABC):

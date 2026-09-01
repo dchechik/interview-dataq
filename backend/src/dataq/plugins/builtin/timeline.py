@@ -18,7 +18,12 @@ from pydantic import BaseModel, Field
 
 from ...core.profile import is_entity
 from ...core.semantic import SEMANTIC_TYPES
-from ...core.timeline import AbnormalityRule, EventAttribute, TimelineSpec
+from ...core.timeline import (
+    AbnormalityOp,
+    AbnormalityRule,
+    EventAttribute,
+    TimelineSpec,
+)
 from ...core.viz import VizSpec
 from ...query.spec import Filter, QuerySpec, Sort
 from ..base import Accepts, Produces, register
@@ -72,10 +77,18 @@ class TimelineParams(BaseModel):
     )
     abnormality_column: str | None = Field(
         default=None,
-        description="Numeric column whose value can mark an event abnormal",
+        description="Numeric column whose value can mark an event abnormal; "
+                    "inferred from a rarity column when omitted",
     )
-    abnormality_op: str = "<"
+    # None rather than "<" so that naming a rarity column does not silently
+    # reverse its rule: share counts down and rarity counts up, and only an
+    # operator the caller actually chose should override that.
+    abnormality_op: AbnormalityOp | None = None
     abnormality_value: float | None = None
+    abnormality_enabled: bool = Field(
+        default=True,
+        description="False turns event flagging off, inferred rule included",
+    )
     # None so an inferred rule can keep its own wording ("rare") while an
     # explicit one still defaults to something neutral.
     abnormality_label: str | None = None
@@ -126,37 +139,58 @@ class Timeline(Visualizer):
 
     @staticmethod
     def _default_abnormality(ctx: VizCtx, p: TimelineParams) -> AbnormalityRule | None:
-        """Use a joined-in rarity column if the dataset has one.
+        """Which events are worth a second look, and why.
 
-        This is the payoff of the aggregate-then-join workflow: `share` is the
-        fraction of rows carrying this value, so a small share means the event
-        is unlike its neighbours.
+        The column is the caller's when they name one and a joined-in rarity
+        column otherwise -- the payoff of the aggregate-then-join workflow,
+        since `share` is the fraction of rows carrying this value, so a small
+        share means the event is unlike its neighbours.
+
+        Every part of the rule is defaulted separately rather than as a block.
+        Requiring the caller to re-specify the column before their threshold
+        counted made the UI's threshold control silently do nothing, which is
+        worse than not having one: it looks like an answer. The same now holds
+        the other way -- naming the column keeps the wording the inference would
+        have given it, so touching one control does not blank the explanation.
         """
+        if not p.abnormality_enabled:
+            return None
+
+        rarity = _rarity_columns(ctx.profile)
         if p.abnormality_column:
-            return AbnormalityRule(
-                column=p.abnormality_column,
-                op=p.abnormality_op,  # type: ignore[arg-type]
-                value=p.abnormality_value if p.abnormality_value is not None else 0.01,
-                label=p.abnormality_label or "unusual",
-            )
-        for column in _rarity_columns(ctx.profile):
-            # Share counts down and rarity counts up, so the comparison flips.
-            inverted = (SEMANTIC_TYPES.is_a(column.semantic_type or "", "numeric.rarity")
-                        or column.name == "rarity")
-            default = 0.99 if inverted else 0.01
-            # An explicit threshold is honoured even when the column was
-            # inferred. Requiring the caller to name the column as well made the
-            # UI's threshold control silently do nothing, which is worse than
-            # not having one: it looks like an answer.
-            value = p.abnormality_value if p.abnormality_value is not None else default
+            column = ctx.profile.column(p.abnormality_column)
+            if column is None:
+                raise ValueError(
+                    f"no column named {p.abnormality_column!r} to flag events by"
+                )
+        else:
+            column = next(iter(rarity), None)
+            if column is None:
+                return None
+
+        # Share counts down and rarity counts up, so the comparison flips.
+        inverted = (SEMANTIC_TYPES.is_a(column.semantic_type or "", "numeric.rarity")
+                    or column.name == "rarity")
+        natural_op: AbnormalityOp = ">" if inverted else "<"
+        op = p.abnormality_op or natural_op
+        default = 0.99 if inverted else 0.01
+        value = p.abnormality_value if p.abnormality_value is not None else default
+
+        # The rarity wording is a claim about the data, so it is only made when
+        # the rule still reads the way that claim assumes: a share column, in
+        # the direction that means "uncommon".
+        if column in rarity and op == natural_op:
             share = (1 - value) if inverted else value
             return AbnormalityRule(
-                column=column.name, op=">" if inverted else "<", value=value,
+                column=column.name, op=op, value=value,
                 label=p.abnormality_label or "rare",
                 rationale=f"fewer than {share:.3%} of rows share this {column.name}"
                           .replace(".000%", "%"),
             )
-        return None
+        return AbnormalityRule(
+            column=column.name, op=op, value=value,
+            label=p.abnormality_label or "unusual",
+        )
 
     def spec(self, ctx: VizCtx) -> VizSpec:
         p: TimelineParams = ctx.params

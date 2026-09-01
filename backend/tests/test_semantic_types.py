@@ -277,6 +277,29 @@ def test_a_shared_custom_meaning_makes_two_datasets_joinable(app_ctx):
     assert out[0].score >= 0.85
 
 
+def test_a_join_suggestion_names_the_dataset_it_would_join_to():
+    """An 8-character id is not something a user recognises, so the title has
+    to carry the catalog name; the id stays as the tiebreak between two
+    datasets sharing a name."""
+    from dataq.plugins.builtin.suggesters import JoinSuggester
+    from dataq.plugins.kinds import SuggestCtx
+
+    events = DatasetProfile(dataset_id="d1aaaaaaaaaa", version=1, row_count=10_000,
+                            columns=[ColumnProfile(name="user", physical_type="VARCHAR",
+                                                   semantic_type="identity.email")])
+    lookup = DatasetProfile(dataset_id="d2bbbbbbbbbb", version=1, row_count=100,
+                            columns=[ColumnProfile(name="email", physical_type="VARCHAR",
+                                                   semantic_type="identity.email")])
+
+    ctx = SuggestCtx(profile=events, params=None, peers=[lookup],
+                     names={"d1aaaaaaaaaa": "logon", "d2bbbbbbbbbb": "employees"})
+    assert JoinSuggester().suggest(ctx)[0].title == "Annotate with employees [d2bbbbbb] on user"
+
+    # A dataset the catalog has no name for still says something identifying.
+    bare = SuggestCtx(profile=events, params=None, peers=[lookup])
+    assert JoinSuggester().suggest(bare)[0].title == "Annotate with d2bbbbbb on user"
+
+
 def test_a_non_joinable_custom_type_suggests_nothing(app_ctx):
     from dataq.plugins.builtin.suggesters import JoinSuggester
     from dataq.plugins.kinds import SuggestCtx

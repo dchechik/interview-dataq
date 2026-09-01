@@ -5,8 +5,9 @@ import { Link, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { useDataset, useProfile } from '../api/hooks'
 import { ChartInspector } from '../components/ChartInspector'
+import { NumberField } from '../components/NumberField'
 import { VizRenderer } from '../renderers'
-import type { Filter } from '../api/types'
+import type { AbnormalityOp, Filter } from '../api/types'
 
 /**
  * The timeline view: what happened, to this thing, in this order.
@@ -22,6 +23,23 @@ interface Pinned {
   value: string
 }
 
+/** Which events get flagged. `column: ''` means flag nothing. */
+interface FlagRule {
+  column: string
+  op: AbnormalityOp
+  value: number
+}
+
+const FLAG_OPS: AbnormalityOp[] = ['<', '<=', '>', '>=', '==', '!=']
+
+// DuckDB's numeric physical types. A rule is a threshold, so only these can
+// carry one -- a timestamp column would compare, but not usefully.
+const NUMERIC_TYPES = [
+  'BIGINT', 'INTEGER', 'SMALLINT', 'TINYINT', 'HUGEINT',
+  'UBIGINT', 'UINTEGER', 'USMALLINT', 'UTINYINT',
+  'DOUBLE', 'FLOAT', 'REAL', 'DECIMAL', 'NUMERIC',
+]
+
 export function TimelinePage() {
   const { id = '' } = useParams()
   const { data: dataset } = useDataset(id)
@@ -31,7 +49,8 @@ export function TimelinePage() {
   const [titleColumn, setTitleColumn] = useState<string>('')
   const [pinned, setPinned] = useState<Pinned[]>([])
   const [limit, setLimit] = useState(200)
-  const [threshold, setThreshold] = useState<number | null>(null)
+  // null until the user takes the rule over; the backend infers one until then.
+  const [flag, setFlag] = useState<FlagRule | null>(null)
 
   // Default the columns from the semantic layer as soon as the profile lands:
   // the time column is whichever column *means* a time, not one named "ts".
@@ -59,10 +78,21 @@ export function TimelinePage() {
       title_column: effectiveTitle || null,
       filters,
       limit,
-      ...(threshold !== null ? { abnormality_value: threshold } : {}),
+      // Untouched, the rule is the backend's to infer. Once touched it is sent
+      // whole -- including the parts that came from the inference -- because a
+      // half-specified rule would be re-inferred against the other half.
+      ...(flag === null
+        ? {}
+        : flag.column === ''
+          ? { abnormality_enabled: false }
+          : {
+              abnormality_column: flag.column,
+              abnormality_op: flag.op,
+              abnormality_value: flag.value,
+            }),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [effectiveTime, effectiveTitle, JSON.stringify(filters), limit, threshold],
+    [effectiveTime, effectiveTitle, JSON.stringify(filters), limit, JSON.stringify(flag)],
   )
 
   const { data, isLoading, error } = useQuery({
@@ -87,6 +117,26 @@ export function TimelinePage() {
   const filterable = (profile?.columns ?? [])
     .filter((c) => c.role !== 'time')
     .map((c) => c.name)
+
+  // Anything numeric can carry a threshold. The backend still *prefers* a
+  // rarity column when nobody has chosen, but preferring is not the same as
+  // being the only option: "flag the slow requests" is the same control.
+  const flagCandidates = (profile?.columns ?? [])
+    .filter(
+      (c) =>
+        c.role !== 'ignore' &&
+        NUMERIC_TYPES.some((t) => c.physical_type.toUpperCase().startsWith(t)),
+    )
+    .map((c) => c.name)
+
+  // What the controls show: the user's rule, else the one the backend inferred,
+  // else nothing chosen yet.
+  const inferred = data?.spec.timeline?.abnormality
+  const shown: FlagRule =
+    flag ??
+    (inferred
+      ? { column: inferred.column, op: inferred.op, value: inferred.value }
+      : { column: '', op: '<', value: 0.01 })
 
   return (
     <div className="space-y-4">
@@ -195,23 +245,61 @@ export function TimelinePage() {
             </div>
           ))}
 
-          {data?.spec.timeline?.abnormality && (
+          {flagCandidates.length > 0 && (
             <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 text-xs">
               <span className="font-medium text-slate-600">Flag when</span>
-              <code className="font-mono text-slate-800">
-                {data.spec.timeline.abnormality.column} {data.spec.timeline.abnormality.op}
-              </code>
-              <input
-                type="number"
-                step="0.005"
-                min="0"
-                value={threshold ?? data.spec.timeline.abnormality.value}
-                onChange={(e) => setThreshold(Number(e.target.value))}
-                className="w-24 rounded border border-slate-300 px-1.5 py-0.5"
-              />
-              <span className="text-slate-400">
-                {data.spec.timeline.abnormality.rationale}
-              </span>
+              <select
+                value={shown.column}
+                // A new column takes the rule's shape with it: the operator and
+                // the threshold that suited a share are meaningless on a
+                // duration, so they go back to the backend's choosing.
+                onChange={(e) =>
+                  setFlag(
+                    e.target.value === shown.column
+                      ? shown
+                      : { column: e.target.value, op: '<', value: 0.01 },
+                  )
+                }
+                className="rounded border border-slate-300 px-2 py-0.5 font-mono"
+              >
+                <option value="">— nothing —</option>
+                {flagCandidates.map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
+              </select>
+              {shown.column && (
+                <>
+                  <select
+                    value={shown.op}
+                    onChange={(e) =>
+                      setFlag({ ...shown, op: e.target.value as AbnormalityOp })
+                    }
+                    className="rounded border border-slate-300 px-1.5 py-0.5 font-mono"
+                  >
+                    {FLAG_OPS.map((o) => (
+                      <option key={o}>{o}</option>
+                    ))}
+                  </select>
+                  <NumberField
+                    value={shown.value}
+                    // Clearing the box leaves the rule where it was rather
+                    // than flagging on an empty threshold.
+                    onChange={(v) => v !== null && setFlag({ ...shown, value: v })}
+                    step="any"
+                    className="w-24 rounded border border-slate-300 px-1.5 py-0.5"
+                  />
+                </>
+              )}
+              <span className="text-slate-400">{inferred?.rationale}</span>
+              {flag !== null && (
+                <button
+                  type="button"
+                  onClick={() => setFlag(null)}
+                  className="text-slate-500 underline"
+                >
+                  reset
+                </button>
+              )}
             </div>
           )}
         </div>

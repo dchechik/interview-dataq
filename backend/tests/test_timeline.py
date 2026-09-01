@@ -187,6 +187,61 @@ def test_an_explicit_rule_overrides_the_inferred_one(app_ctx, annotated):
     assert (rule.op, rule.value, rule.label) == (">", 0.5, "very common")
 
 
+def test_naming_the_inferred_column_keeps_its_explanation(app_ctx, annotated):
+    """What the UI sends back when only the threshold was touched.
+
+    The control is populated from the rule it is editing, so it re-sends the
+    column and the operator it was given. Treating that as "explicit, therefore
+    unexplained" blanked the rationale the moment the user moved the threshold.
+    """
+    out = render_viz(app_ctx, "viz.timeline", annotated, {
+        **BASE, "abnormality_column": "share", "abnormality_op": "<",
+        "abnormality_value": 0.05,
+    })
+    rule = out.spec.timeline.abnormality
+    assert (rule.column, rule.op, rule.value, rule.label) == ("share", "<", 0.05, "rare")
+    assert "5%" in rule.rationale
+
+
+def test_reversing_the_rule_drops_the_rarity_wording(app_ctx, annotated):
+    """"Fewer than 50% of rows share this" is a claim about the data, and it is
+    false once the rule flags the common values instead of the rare ones."""
+    out = render_viz(app_ctx, "viz.timeline", annotated, {
+        **BASE, "abnormality_column": "share", "abnormality_op": ">",
+        "abnormality_value": 0.5,
+    })
+    rule = out.spec.timeline.abnormality
+    assert rule.label == "unusual"
+    assert rule.rationale == ""
+
+
+def test_flagging_can_be_turned_off_despite_a_rarity_column(app_ctx, annotated):
+    out = render_viz(app_ctx, "viz.timeline", annotated,
+                     {**BASE, "abnormality_enabled": False})
+    assert out.spec.timeline.abnormality is None
+
+
+def test_flagging_by_an_ordinary_measure_is_allowed(app_ctx, annotated):
+    """The rule is a threshold on a number; a rarity column is only the default.
+
+    `n` is the joined-in count -- a plain measure, carrying no claim about how
+    unusual anything is, so the rule states itself and stops there.
+    """
+    out = render_viz(app_ctx, "viz.timeline", annotated, {
+        **BASE, "abnormality_column": "n", "abnormality_op": ">",
+        "abnormality_value": 400,
+    })
+    rule = out.spec.timeline.abnormality
+    assert (rule.column, rule.op, rule.value, rule.label) == ("n", ">", 400, "unusual")
+    assert not rule.rationale
+    assert "n" in {s.column for s in out.spec.query.select}
+
+
+def test_flagging_by_a_column_that_is_not_there_says_so(app_ctx, auth):
+    with pytest.raises(Exception, match="flag events by"):
+        render_viz(app_ctx, "viz.timeline", auth, {**BASE, "abnormality_column": "nope"})
+
+
 # --------------------------------------------------------------------------- #
 # resolution against the query's real output
 # --------------------------------------------------------------------------- #

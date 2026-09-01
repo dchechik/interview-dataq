@@ -397,10 +397,11 @@ class JoinSuggester(Suggester):
                     annotation = peer.row_count and peer.row_count < max(1, p.row_count) / 10
                     if annotation:
                         score = min(0.95, score + 0.15)
+                    peer_label = ctx.label(peer.dataset_id)
                     out.append(Suggestion(
-                        title=(f"Annotate with {peer.dataset_id[:8]} on {left.name}"
+                        title=(f"Annotate with {peer_label} on {left.name}"
                                if annotation
-                               else f"Join {left.name} to {right.name}"),
+                               else f"Join {left.name} to {right.name} in {peer_label}"),
                         rationale=f"both columns are {left.semantic_type}",
                         kind="join", score=score,
                         action={

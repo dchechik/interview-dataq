@@ -5,6 +5,9 @@
  * backend gives it a working UI with no frontend change at all. The schema comes
  * straight from the plugin's Pydantic `Params` model via `GET /api/plugins`.
  */
+import { useState } from 'react'
+
+import { NumberField } from './NumberField'
 import type { JsonSchema } from '../api/types'
 
 interface Props {
@@ -27,6 +30,73 @@ function effective(schema: JsonSchema): JsonSchema {
 /** `hour_of_day` reads as "hour of day" in a menu without losing the sent value. */
 function humanize(value: unknown): string {
   return String(value).replace(/_/g, ' ')
+}
+
+/**
+ * A list of strings edited as text -- one per line, or comma separated.
+ *
+ * The field's value is a list, but a list is not what the user is typing. The
+ * normalisation the backend wants (trim each entry, drop the empty ones) cannot
+ * run on every keystroke: pressing Enter makes an empty last line, which the
+ * filter deleted before the re-render, so a new line could never be started --
+ * and a comma vanished the moment it was typed. The typed text is therefore
+ * local state and the parsed list is published alongside it; the parent's value
+ * is adopted only when it changes to something this field did not publish,
+ * which is how re-seeding the form from a suggestion still works.
+ */
+function ListField({
+  value,
+  onChange,
+  multiline = false,
+  placeholder,
+}: {
+  value: unknown
+  onChange: (next: string[]) => void
+  multiline?: boolean
+  placeholder: string
+}) {
+  const sep = multiline ? '\n' : ', '
+  const parse = (text: string) =>
+    text
+      .split(multiline ? '\n' : ',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+
+  const external = Array.isArray(value) ? value.join(sep) : String(value ?? '')
+  const [state, setState] = useState({ text: external, published: external })
+  if (state.published !== external) setState({ text: external, published: external })
+
+  const edit = (text: string) => {
+    const lines = parse(text)
+    setState({ text, published: lines.join(sep) })
+    onChange(lines)
+  }
+
+  const className = multiline
+    ? 'w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-xs'
+    : 'w-full rounded border border-slate-300 px-2 py-1.5 text-sm'
+
+  if (!multiline) {
+    return (
+      <input
+        type="text"
+        className={className}
+        placeholder={placeholder}
+        value={state.text}
+        onChange={(e) => edit(e.target.value)}
+      />
+    )
+  }
+  return (
+    <textarea
+      rows={Math.max(4, state.text.split('\n').length + 1)}
+      spellCheck={false}
+      className={className}
+      placeholder={placeholder}
+      value={state.text}
+      onChange={(e) => edit(e.target.value)}
+    />
+  )
 }
 
 function looksLikeColumn(name: string): boolean {
@@ -101,52 +171,29 @@ export function SchemaForm({ schema, value, onChange, columns = [] }: Props) {
                 className="h-4 w-4"
               />
             ) : field.type === 'integer' || field.type === 'number' ? (
-              <input
-                type="number"
+              <NumberField
                 className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-                value={current === null ? '' : String(current)}
+                value={current === '' || current === null ? null : Number(current)}
                 min={field.minimum}
                 max={field.maximum}
-                onChange={(e) =>
-                  set(key, e.target.value === '' ? null : Number(e.target.value))
-                }
+                onChange={(v) => set(key, v)}
               />
             ) : field.type === 'array' && field.format === 'textarea' ? (
               // A list where each entry is a line of notation rather than a
               // word: feature expressions, one per line. Comma-separating them
               // would be unreadable, and would collide with the commas inside
               // 'by user, activity_type'.
-              <textarea
-                rows={Math.max(4, Array.isArray(current) ? current.length + 1 : 4)}
-                spellCheck={false}
-                className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-xs"
+              <ListField
+                multiline
+                value={current}
+                onChange={(v) => set(key, v)}
                 placeholder={'count() by user, activity_type over 30d\ndays_since_last() by user'}
-                value={Array.isArray(current) ? current.join('\n') : String(current ?? '')}
-                onChange={(e) =>
-                  set(
-                    key,
-                    e.target.value
-                      .split('\n')
-                      .map((s) => s.trim())
-                      .filter(Boolean),
-                  )
-                }
               />
             ) : field.type === 'array' ? (
-              <input
-                type="text"
-                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              <ListField
+                value={current}
+                onChange={(v) => set(key, v)}
                 placeholder="comma separated"
-                value={Array.isArray(current) ? current.join(', ') : String(current ?? '')}
-                onChange={(e) =>
-                  set(
-                    key,
-                    e.target.value
-                      .split(',')
-                      .map((s) => s.trim())
-                      .filter(Boolean),
-                  )
-                }
               />
             ) : (
               <input
