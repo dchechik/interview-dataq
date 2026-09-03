@@ -1,29 +1,40 @@
-import { useQueries, useQueryClient } from '@tanstack/react-query'
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import { api } from '../api/client'
-import { keys, useDataset, useOperation, useSuggestions } from '../api/hooks'
-import type { ChartSpec, RenderedViz, Suggestion } from '../api/types'
-import { ChartEditor } from '../components/ChartEditor'
-import { ChartInspector } from '../components/ChartInspector'
-import { VizRenderer } from '../renderers'
+import {
+  keys,
+  useDataset,
+  useOperation,
+  useProfile,
+  useSuggestions,
+} from '../api/hooks'
+import type { RenderedViz, Suggestion } from '../api/types'
+import { ChartPanel } from '../components/ChartPanel'
+import { NewChart } from '../components/NewChart'
 
 /**
- * Charts come entirely from backend suggestions: the page has no hard-coded idea
- * of what a taxi or an auth log looks like. It renders whatever the suggesters
- * propose, through whichever renderer each VizSpec names.
+ * Charts come from backend suggestions, and from whatever else you ask for.
+ *
+ * The page has no hard-coded idea of what a taxi or an auth log looks like: it
+ * renders whatever the suggesters propose, through whichever renderer each
+ * VizSpec names. But suggestions are inferred from semantic types, so on their
+ * own they make an undetected column into a missing capability -- hence the
+ * builder at the top, which reaches every visualizer the backend has.
  */
 export function ExplorePage() {
   const { id = '' } = useParams()
   const qc = useQueryClient()
   const { data: dataset } = useDataset(id)
+  const { data: profile } = useProfile(id)
   const { data: suggestions } = useSuggestions(id, 'viz')
   const [saved, setSaved] = useState<string | null>(null)
-  // Local edits to a suggested chart, by panel index. Kept here rather than in
-  // the panel so "Reset" can drop back to whatever the suggester proposed.
-  const [edited, setEdited] = useState<Record<number, ChartSpec>>({})
-  const [editing, setEditing] = useState<number | null>(null)
+  // The chart asked for by hand, if any. One at a time: it is a workbench, and
+  // anything worth keeping goes to a dashboard.
+  const [drawn, setDrawn] = useState<{ pluginId: string; params: Record<string, unknown> } | null>(
+    null,
+  )
   const operation = useOperation()
 
   /**
@@ -52,6 +63,14 @@ export function ExplorePage() {
     () => (suggestions ?? []).filter((s) => s.action?.op === 'inspect').slice(0, 6),
     [suggestions],
   )
+
+  const drawnViz = useQuery({
+    queryKey: ['viz', id, drawn?.pluginId, drawn?.params],
+    queryFn: () =>
+      api.inspect({ plugin_id: drawn!.pluginId, dataset_id: id, params: drawn!.params }),
+    enabled: Boolean(drawn),
+    retry: false,
+  })
 
   const rendered = useQueries({
     queries: vizSuggestions.map((s) => {
@@ -101,99 +120,46 @@ export function ExplorePage() {
         </Link>
       </div>
 
+      <NewChart
+        datasetId={id}
+        columns={(profile?.columns ?? []).map((c) => c.name)}
+        onDraw={(pluginId, params) => setDrawn({ pluginId, params })}
+      />
+
+      {drawn && (
+        <ChartPanel
+          // Remounted per drawn chart, so chart-level edits never outlive the
+          // chart they were made to.
+          key={`${drawn.pluginId}:${JSON.stringify(drawn.params)}`}
+          title={drawnViz.data?.spec.title || 'New chart'}
+          subtitle={drawn.pluginId}
+          viz={drawnViz.data}
+          isLoading={drawnViz.isLoading}
+          error={drawnViz.error}
+          onSaveDataset={saveAsDataset}
+          onPin={saveToDashboard}
+        />
+      )}
+
       {!vizSuggestions.length && (
         <p className="rounded border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
-          No chart suggestions for this dataset.
+          Nothing suggested itself for this dataset — draw one above.
         </p>
       )}
 
       <div className="grid gap-4 xl:grid-cols-2">
-        {vizSuggestions.map((s, i) => {
-          const q = rendered[i]
-          return (
-            <section key={i} className="rounded-lg border border-slate-200 bg-white p-4">
-              <div className="mb-2 flex items-start justify-between gap-2">
-                <div>
-                  <h2 className="text-sm font-semibold text-slate-900">{s.title}</h2>
-                  <p className="text-xs text-slate-500">{s.rationale}</p>
-                </div>
-                {q.data && (
-                  <div className="flex shrink-0 gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => saveAsDataset(q.data)}
-                      title="Materialise this chart's query as a dataset"
-                      className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
-                    >
-                      Save as dataset
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => saveToDashboard(q.data)}
-                      className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
-                    >
-                      Pin to dashboard
-                    </button>
-                  </div>
-                )}
-              </div>
-              {q.data?.spec.chart && (
-                <div className="mb-2">
-                  <button
-                    type="button"
-                    onClick={() => setEditing(editing === i ? null : i)}
-                    className="text-xs text-slate-400 hover:text-slate-700"
-                  >
-                    {editing === i ? '▾ Hide chart controls' : '▸ Edit chart'}
-                  </button>
-                  {editing === i && (
-                    <div className="mt-1.5">
-                      <ChartEditor
-                        chart={edited[i] ?? q.data.spec.chart}
-                        columns={Object.keys(q.data.data[0] ?? {})}
-                        onChange={(next) => setEdited((e) => ({ ...e, [i]: next }))}
-                        onReset={
-                          edited[i]
-                            ? () =>
-                                setEdited((e) => {
-                                  const { [i]: _drop, ...rest } = e
-                                  return rest
-                                })
-                            : undefined
-                        }
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-              {q.isLoading && <p className="p-6 text-center text-sm text-slate-500">Loading…</p>}
-              {q.error && (
-                <p className="rounded bg-rose-50 p-3 text-xs text-rose-800">
-                  {String((q.error as Error).message)}
-                </p>
-              )}
-              {q.data && (
-                <>
-                  <VizRenderer
-                    spec={edited[i] ? { ...q.data.spec, chart: edited[i] } : q.data.spec}
-                    data={q.data.data}
-                    height={q.data.spec.renderer === 'maplibre' ? 420 : 280}
-                  />
-                  <ChartInspector
-                    data={q.data.data}
-                    sql={q.data.sql}
-                    query={q.data.spec.query}
-                    chart={edited[i] ?? q.data.spec.chart}
-                    rawSpec={q.data.spec.spec}
-                    rowCount={q.data.row_count}
-                    elapsedMs={q.data.elapsed_ms}
-                    truncated={q.data.truncated}
-                  />
-                </>
-              )}
-            </section>
-          )
-        })}
+        {vizSuggestions.map((s, i) => (
+          <ChartPanel
+            key={i}
+            title={s.title}
+            subtitle={s.rationale}
+            viz={rendered[i].data}
+            isLoading={rendered[i].isLoading}
+            error={rendered[i].error}
+            onSaveDataset={saveAsDataset}
+            onPin={saveToDashboard}
+          />
+        ))}
       </div>
     </div>
   )

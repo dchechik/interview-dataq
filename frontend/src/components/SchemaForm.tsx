@@ -105,7 +105,10 @@ function looksLikeColumn(name: string): boolean {
     name.endsWith('_column') ||
     name === 'dimension' ||
     name === 'measure' ||
-    name === 'series'
+    name === 'series' ||
+    // Not spelled `*_column`, but a column all the same -- and typing a column
+    // name by hand into a chart form is how you get a chart that will not draw.
+    name === 'animate_by'
   )
 }
 
