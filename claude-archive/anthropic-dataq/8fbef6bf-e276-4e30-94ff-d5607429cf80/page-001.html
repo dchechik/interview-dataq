@@ -1,0 +1,1509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Code transcript - page 1</title>
+    <style>
+:root { --bg-color: #f5f5f5; --card-bg: #ffffff; --user-bg: #e3f2fd; --user-border: #1976d2; --assistant-bg: #f5f5f5; --assistant-border: #9e9e9e; --thinking-bg: #fff8e1; --thinking-border: #ffc107; --thinking-text: #666; --tool-bg: #f3e5f5; --tool-border: #9c27b0; --tool-result-bg: #e8f5e9; --tool-error-bg: #ffebee; --text-color: #212121; --text-muted: #757575; --code-bg: #263238; --code-text: #aed581; }
+* { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg-color); color: var(--text-color); margin: 0; padding: 16px; line-height: 1.6; }
+.container { max-width: 800px; margin: 0 auto; }
+h1 { font-size: 1.5rem; margin-bottom: 24px; padding-bottom: 8px; border-bottom: 2px solid var(--user-border); }
+.header-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; border-bottom: 2px solid var(--user-border); padding-bottom: 8px; margin-bottom: 24px; }
+.header-row h1 { border-bottom: none; padding-bottom: 0; margin-bottom: 0; flex: 1; min-width: 200px; }
+.message { margin-bottom: 16px; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.message.user { background: var(--user-bg); border-left: 4px solid var(--user-border); }
+.message.assistant { background: var(--card-bg); border-left: 4px solid var(--assistant-border); }
+.message.tool-reply { background: #fff8e1; border-left: 4px solid #ff9800; }
+.tool-reply .role-label { color: #e65100; }
+.tool-reply .tool-result { background: transparent; padding: 0; margin: 0; }
+.tool-reply .tool-result .truncatable.truncated::after { background: linear-gradient(to bottom, transparent, #fff8e1); }
+.message-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; background: rgba(0,0,0,0.03); font-size: 0.85rem; }
+.role-label { font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+.user .role-label { color: var(--user-border); }
+time { color: var(--text-muted); font-size: 0.8rem; }
+.timestamp-link { color: inherit; text-decoration: none; }
+.timestamp-link:hover { text-decoration: underline; }
+.message:target { animation: highlight 2s ease-out; }
+@keyframes highlight { 0% { background-color: rgba(25, 118, 210, 0.2); } 100% { background-color: transparent; } }
+.message-content { padding: 16px; }
+.message-content p { margin: 0 0 12px 0; }
+.message-content p:last-child { margin-bottom: 0; }
+.thinking { background: var(--thinking-bg); border: 1px solid var(--thinking-border); border-radius: 8px; padding: 12px; margin: 12px 0; font-size: 0.9rem; color: var(--thinking-text); }
+.thinking-label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; color: #f57c00; margin-bottom: 8px; }
+.thinking p { margin: 8px 0; }
+.assistant-text { margin: 8px 0; }
+.tool-use { background: var(--tool-bg); border: 1px solid var(--tool-border); border-radius: 8px; padding: 12px; margin: 12px 0; }
+.tool-header { font-weight: 600; color: var(--tool-border); margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+.tool-icon { font-size: 1.1rem; }
+.tool-description { font-size: 0.9rem; color: var(--text-muted); margin-bottom: 8px; font-style: italic; }
+.tool-result { background: var(--tool-result-bg); border-radius: 8px; padding: 12px; margin: 12px 0; }
+.tool-result.tool-error { background: var(--tool-error-bg); }
+.file-tool { border-radius: 8px; padding: 12px; margin: 12px 0; }
+.write-tool { background: linear-gradient(135deg, #e3f2fd 0%, #e8f5e9 100%); border: 1px solid #4caf50; }
+.edit-tool { background: linear-gradient(135deg, #fff3e0 0%, #fce4ec 100%); border: 1px solid #ff9800; }
+.file-tool-header { font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; font-size: 0.95rem; }
+.write-header { color: #2e7d32; }
+.edit-header { color: #e65100; }
+.file-tool-icon { font-size: 1rem; }
+.file-tool-path { font-family: monospace; background: rgba(0,0,0,0.08); padding: 2px 8px; border-radius: 4px; }
+.file-tool-fullpath { font-family: monospace; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px; word-break: break-all; }
+.file-content { margin: 0; }
+.edit-section { display: flex; margin: 4px 0; border-radius: 4px; overflow: hidden; }
+.edit-label { padding: 8px 12px; font-weight: bold; font-family: monospace; display: flex; align-items: flex-start; }
+.edit-old { background: #fce4ec; }
+.edit-old .edit-label { color: #b71c1c; background: #f8bbd9; }
+.edit-old .edit-content { color: #880e4f; }
+.edit-new { background: #e8f5e9; }
+.edit-new .edit-label { color: #1b5e20; background: #a5d6a7; }
+.edit-new .edit-content { color: #1b5e20; }
+.edit-content { margin: 0; flex: 1; background: transparent; font-size: 0.85rem; }
+.edit-replace-all { font-size: 0.75rem; font-weight: normal; color: var(--text-muted); }
+.write-tool .truncatable.truncated::after { background: linear-gradient(to bottom, transparent, #e6f4ea); }
+.edit-tool .truncatable.truncated::after { background: linear-gradient(to bottom, transparent, #fff0e5); }
+.todo-list { background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%); border: 1px solid #81c784; border-radius: 8px; padding: 12px; margin: 12px 0; }
+.todo-header { font-weight: 600; color: #2e7d32; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; font-size: 0.95rem; }
+.todo-items { list-style: none; margin: 0; padding: 0; }
+.todo-item { display: flex; align-items: flex-start; gap: 10px; padding: 6px 0; border-bottom: 1px solid rgba(0,0,0,0.06); font-size: 0.9rem; }
+.todo-item:last-child { border-bottom: none; }
+.todo-icon { flex-shrink: 0; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-weight: bold; border-radius: 50%; }
+.todo-completed .todo-icon { color: #2e7d32; background: rgba(46, 125, 50, 0.15); }
+.todo-completed .todo-content { color: #558b2f; text-decoration: line-through; }
+.todo-in-progress .todo-icon { color: #f57c00; background: rgba(245, 124, 0, 0.15); }
+.todo-in-progress .todo-content { color: #e65100; font-weight: 500; }
+.todo-pending .todo-icon { color: #757575; background: rgba(0,0,0,0.05); }
+.todo-pending .todo-content { color: #616161; }
+pre { background: var(--code-bg); color: var(--code-text); padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 0.85rem; line-height: 1.5; margin: 8px 0; white-space: pre-wrap; word-wrap: break-word; }
+pre.json { color: #e0e0e0; }
+code { background: rgba(0,0,0,0.08); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+pre code { background: none; padding: 0; }
+.user-content { margin: 0; }
+.truncatable { position: relative; }
+.truncatable.truncated .truncatable-content { max-height: 200px; overflow: hidden; }
+.truncatable.truncated::after { content: ''; position: absolute; bottom: 32px; left: 0; right: 0; height: 60px; background: linear-gradient(to bottom, transparent, var(--card-bg)); pointer-events: none; }
+.message.user .truncatable.truncated::after { background: linear-gradient(to bottom, transparent, var(--user-bg)); }
+.message.tool-reply .truncatable.truncated::after { background: linear-gradient(to bottom, transparent, #fff8e1); }
+.tool-use .truncatable.truncated::after { background: linear-gradient(to bottom, transparent, var(--tool-bg)); }
+.tool-result .truncatable.truncated::after { background: linear-gradient(to bottom, transparent, var(--tool-result-bg)); }
+.expand-btn { display: none; width: 100%; padding: 8px 16px; margin-top: 4px; background: rgba(0,0,0,0.05); border: 1px solid rgba(0,0,0,0.1); border-radius: 6px; cursor: pointer; font-size: 0.85rem; color: var(--text-muted); }
+.expand-btn:hover { background: rgba(0,0,0,0.1); }
+.truncatable.truncated .expand-btn, .truncatable.expanded .expand-btn { display: block; }
+.pagination { display: flex; justify-content: center; gap: 8px; margin: 24px 0; flex-wrap: wrap; }
+.pagination a, .pagination span { padding: 5px 10px; border-radius: 6px; text-decoration: none; font-size: 0.85rem; }
+.pagination a { background: var(--card-bg); color: var(--user-border); border: 1px solid var(--user-border); }
+.pagination a:hover { background: var(--user-bg); }
+.pagination .current { background: var(--user-border); color: white; }
+.pagination .disabled { color: var(--text-muted); border: 1px solid #ddd; }
+.pagination .index-link { background: var(--user-border); color: white; }
+details.continuation { margin-bottom: 16px; }
+details.continuation summary { cursor: pointer; padding: 12px 16px; background: var(--user-bg); border-left: 4px solid var(--user-border); border-radius: 12px; font-weight: 500; color: var(--text-muted); }
+details.continuation summary:hover { background: rgba(25, 118, 210, 0.15); }
+details.continuation[open] summary { border-radius: 12px 12px 0 0; margin-bottom: 0; }
+.index-item { margin-bottom: 16px; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); background: var(--user-bg); border-left: 4px solid var(--user-border); }
+.index-item a { display: block; text-decoration: none; color: inherit; }
+.index-item a:hover { background: rgba(25, 118, 210, 0.1); }
+.index-item-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; background: rgba(0,0,0,0.03); font-size: 0.85rem; }
+.index-item-number { font-weight: 600; color: var(--user-border); }
+.index-item-content { padding: 16px; }
+.index-item-stats { padding: 8px 16px 12px 32px; font-size: 0.85rem; color: var(--text-muted); border-top: 1px solid rgba(0,0,0,0.06); }
+.index-item-commit { margin-top: 6px; padding: 4px 8px; background: #fff3e0; border-radius: 4px; font-size: 0.85rem; color: #e65100; }
+.index-item-commit code { background: rgba(0,0,0,0.08); padding: 1px 4px; border-radius: 3px; font-size: 0.8rem; margin-right: 6px; }
+.commit-card { margin: 8px 0; padding: 10px 14px; background: #fff3e0; border-left: 4px solid #ff9800; border-radius: 6px; }
+.commit-card a { text-decoration: none; color: #5d4037; display: block; }
+.commit-card a:hover { color: #e65100; }
+.commit-card-hash { font-family: monospace; color: #e65100; font-weight: 600; margin-right: 8px; }
+.index-commit { margin-bottom: 12px; padding: 10px 16px; background: #fff3e0; border-left: 4px solid #ff9800; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+.index-commit a { display: block; text-decoration: none; color: inherit; }
+.index-commit a:hover { background: rgba(255, 152, 0, 0.1); margin: -10px -16px; padding: 10px 16px; border-radius: 8px; }
+.index-commit-header { display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; margin-bottom: 4px; }
+.index-commit-hash { font-family: monospace; color: #e65100; font-weight: 600; }
+.index-commit-msg { color: #5d4037; }
+.index-item-long-text { margin-top: 8px; padding: 12px; background: var(--card-bg); border-radius: 8px; border-left: 3px solid var(--assistant-border); }
+.index-item-long-text .truncatable.truncated::after { background: linear-gradient(to bottom, transparent, var(--card-bg)); }
+.index-item-long-text-content { color: var(--text-color); }
+#search-box { display: none; align-items: center; gap: 8px; }
+#search-box input { padding: 6px 12px; border: 1px solid var(--assistant-border); border-radius: 6px; font-size: 16px; width: 180px; }
+#search-box button, #modal-search-btn, #modal-close-btn { background: var(--user-border); color: white; border: none; border-radius: 6px; padding: 6px 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+#search-box button:hover, #modal-search-btn:hover { background: #1565c0; }
+#modal-close-btn { background: var(--text-muted); margin-left: 8px; }
+#modal-close-btn:hover { background: #616161; }
+#search-modal[open] { border: none; border-radius: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.2); padding: 0; width: 90vw; max-width: 900px; height: 80vh; max-height: 80vh; display: flex; flex-direction: column; }
+#search-modal::backdrop { background: rgba(0,0,0,0.5); }
+.search-modal-header { display: flex; align-items: center; gap: 8px; padding: 16px; border-bottom: 1px solid var(--assistant-border); background: var(--bg-color); border-radius: 12px 12px 0 0; }
+.search-modal-header input { flex: 1; padding: 8px 12px; border: 1px solid var(--assistant-border); border-radius: 6px; font-size: 16px; }
+#search-status { padding: 8px 16px; font-size: 0.85rem; color: var(--text-muted); border-bottom: 1px solid rgba(0,0,0,0.06); }
+#search-results { flex: 1; overflow-y: auto; padding: 16px; }
+.search-result { margin-bottom: 16px; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.search-result a { display: block; text-decoration: none; color: inherit; }
+.search-result a:hover { background: rgba(25, 118, 210, 0.05); }
+.search-result-page { padding: 6px 12px; background: rgba(0,0,0,0.03); font-size: 0.8rem; color: var(--text-muted); border-bottom: 1px solid rgba(0,0,0,0.06); }
+.search-result-content { padding: 12px; }
+.search-result mark { background: #fff59d; padding: 1px 2px; border-radius: 2px; }
+@media (max-width: 600px) { body { padding: 8px; } .message, .index-item { border-radius: 8px; } .message-content, .index-item-content { padding: 12px; } pre { font-size: 0.8rem; padding: 8px; } #search-box input { width: 120px; } #search-modal[open] { width: 95vw; height: 90vh; } }
+</style>
+</head>
+<body>
+    <div class="container">
+        <h1><a href="index.html" style="color: inherit; text-decoration: none;">Claude Code transcript</a> - page 1/3</h1>
+        
+
+<div class="pagination">
+<a href="index.html" class="index-link">Index</a>
+<span class="disabled">&larr; Prev</span>
+<span class="current">1</span>
+<a href="page-002.html">2</a>
+<a href="page-003.html">3</a>
+<a href="page-002.html">Next &rarr;</a>
+</div>
+
+        
+<div class="message user" id="msg-2026-08-31T00-41-34-029Z"><div class="message-header"><span class="role-label">User</span><a href="#msg-2026-08-31T00-41-34-029Z" class="timestamp-link"><time datetime="2026-08-31T00:41:34.029Z" data-timestamp="2026-08-31T00:41:34.029Z">2026-08-31T00:41:34.029Z</time></a></div><div class="message-content">
+<div class="user-content"><p><local-command-caveat>Caveat: The messages below were generated by the user while running local commands. DO NOT respond to these messages or otherwise consider them in your response unless the user explicitly asks you to.</local-command-caveat></p></div></div></div>
+<div class="message user" id="msg-2026-08-31T00-41-34-029Z"><div class="message-header"><span class="role-label">User</span><a href="#msg-2026-08-31T00-41-34-029Z" class="timestamp-link"><time datetime="2026-08-31T00:41:34.029Z" data-timestamp="2026-08-31T00:41:34.029Z">2026-08-31T00:41:34.029Z</time></a></div><div class="message-content">
+<div class="user-content"><p><command-name>/login</command-name>
+            <command-message>login</command-message>
+            <command-args></command-args></p></div></div></div>
+<div class="message user" id="msg-2026-08-31T00-41-34-029Z"><div class="message-header"><span class="role-label">User</span><a href="#msg-2026-08-31T00-41-34-029Z" class="timestamp-link"><time datetime="2026-08-31T00:41:34.029Z" data-timestamp="2026-08-31T00:41:34.029Z">2026-08-31T00:41:34.029Z</time></a></div><div class="message-content">
+<div class="user-content"><p><local-command-stdout>Login successful</local-command-stdout></p></div></div></div>
+<div class="message user" id="msg-2026-08-31T00-41-57-433Z"><div class="message-header"><span class="role-label">User</span><a href="#msg-2026-08-31T00-41-57-433Z" class="timestamp-link"><time datetime="2026-08-31T00:41:57.433Z" data-timestamp="2026-08-31T00:41:57.433Z">2026-08-31T00:41:57.433Z</time></a></div><div class="message-content">
+<div class="user-content"><p>how do i set up DATAQ_USERS, DATAQ_AUTH, ANTHROPIC_API_KEY for local deploy vs railway deploy</p></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-41-59-506Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-41-59-506Z" class="timestamp-link"><time datetime="2026-08-31T00:41:59.506Z" data-timestamp="2026-08-31T00:41:59.506Z">2026-08-31T00:41:59.506Z</time></a></div><div class="message-content">
+<div class="assistant-text"><p>I'll look at how the app reads these variables before answering.</p></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-42-01-181Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-42-01-181Z" class="timestamp-link"><time datetime="2026-08-31T00:42:01.181Z" data-timestamp="2026-08-31T00:42:01.181Z">2026-08-31T00:42:01.181Z</time></a></div><div class="message-content">
+<div class="tool-use bash-tool" data-tool-id="toolu_016Ar5fiQYVtZjQiwZZgSbxs">
+<div class="tool-header"><span class="tool-icon">$</span> Bash</div><div class="truncatable"><div class="truncatable-content"><pre class="bash-command">ls -a &amp;&amp; grep -rn &#34;DATAQ_USERS\|DATAQ_AUTH\|ANTHROPIC_API_KEY&#34; --include=&#34;*.py&#34; --include=&#34;*.ts&#34; --include=&#34;*.tsx&#34; --include=&#34;*.js&#34; --include=&#34;*.md&#34; --include=&#34;*.toml&#34; --include=&#34;*.json&#34; --include=&#34;*.yaml&#34; --include=&#34;*.yml&#34; --include=&#34;*.sh&#34; --include=&#34;*.env*&#34; . 2&gt;/dev/null | grep -v node_modules | head -50</pre></div><button class="expand-btn">Show more</button></div>
+</div></div></div>
+<div class="message tool-reply" id="msg-2026-08-31T00-42-01-492Z"><div class="message-header"><span class="role-label">Tool reply</span><a href="#msg-2026-08-31T00-42-01-492Z" class="timestamp-link"><time datetime="2026-08-31T00:42:01.492Z" data-timestamp="2026-08-31T00:42:01.492Z">2026-08-31T00:42:01.492Z</time></a></div><div class="message-content"><div class="tool-result"><div class="truncatable"><div class="truncatable-content"><pre>.
+..
+.dockerignore
+.env.example
+.git
+.github
+.gitignore
+.python-version
+2026-08-26-212352-read-the-plan-under-plansspecv0-lets-come-up.txt
+2026-08-26-213417-read-the-plan-under-plansspecv0-lets-come-up.txt
+2026-08-26-215828-read-the-plan-under-plansspecv0-lets-come-up.txt
+2026-08-27-175737-read-the-plan-under-plansspecv0-lets-come-up.txt
+2026-08-28-162730-read-the-plan-under-plansspecv0-lets-come-up.txt
+2026-08-28-173148-read-the-plan-under-plansspecv0-lets-come-up.txt
+backend
+data
+docker
+docker-compose.yml
+Dockerfile
+docs
+frontend
+Makefile
+plans
+railway.json
+README.md
+docker-compose.yml:14:      DATAQ_ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+docker-compose.yml:18:      DATAQ_AUTH_TOKEN: ${DATAQ_AUTH_TOKEN:-}
+.env.example:33:# DATAQ_AUTH_TOKEN=
+.env.example:42:# ANTHROPIC_API_KEY=sk-ant-...
+README.md:224:# prints  alice:scrypt$...  — put it in DATAQ_USERS
+README.md:227:`DATAQ_USERS` takes `name:hash` entries separated by commas or newlines, and
+README.md:236:The older shared `DATAQ_AUTH_TOKEN` still works alongside accounts — that is
+README.md:241:deployment must set `DATAQ_USERS` or `DATAQ_AUTH_TOKEN` of its own, and the app
+README.md:433:2. **Set variables** — `DATAQ_AUTH_TOKEN` (a long random string),
+README.md:435:   `DATAQ_STORAGE=parquet`, and `DATAQ_ANTHROPIC_API_KEY` if you want the agent.
+README.md:455:A hosted instance needs `DATAQ_AUTH_TOKEN` set. Without it anyone who finds the
+README.md:483:Set `ANTHROPIC_API_KEY` (or `DATAQ_ANTHROPIC_API_KEY` — both are read) to enable
+frontend/src/api/client.ts:29: * Normally a session token from signing in; a shared DATAQ_AUTH_TOKEN also
+backend/tests/test_agent.py:159:    with pytest.raises(RuntimeError, match=&quot;ANTHROPIC_API_KEY&quot;):
+backend/tests/test_auth.py:61:    with pytest.raises(MisconfiguredAuth, match=&quot;DATAQ_AUTH_TOKEN&quot;):
+backend/src/dataq/config.py:62:    # Agent / LLM plugins. Accepts the conventional bare ANTHROPIC_API_KEY as
+backend/src/dataq/config.py:64:    # DATAQ_ANTHROPIC_API_KEY meant the agent refused to start on a host where
+backend/src/dataq/config.py:68:        validation_alias=AliasChoices(&quot;DATAQ_ANTHROPIC_API_KEY&quot;, &quot;ANTHROPIC_API_KEY&quot;),
+backend/src/dataq/api/auth.py:54:            &quot;no DATAQ_AUTH_TOKEN and no DATAQ_USERS. The built-in account does &quot;
+backend/src/dataq/api/users.py:62:# extend this with DATAQ_USERS, which takes the same &quot;name:hash&quot; entries.
+backend/src/dataq/api/users.py:74:    Replacing rather than merging: if someone sets DATAQ_USERS on a deployment,
+backend/src/dataq/api/newuser.py:1:&quot;&quot;&quot;Generate a user entry for DATAQ_USERS.
+backend/src/dataq/services/agent.py:334:                &quot;no ANTHROPIC_API_KEY configured; the analysis agent needs one&quot;
+docs/DEPLOY.md:89:| `DATAQ_AUTH_TOKEN` | a long random string | The shared secret the UI and API require |
+docs/DEPLOY.md:93:| `DATAQ_ANTHROPIC_API_KEY` | `sk-ant-…` | Only needed for the agent and LLM plugins |
+docs/DEPLOY.md:152:The app has no user accounts; `DATAQ_AUTH_TOKEN` is a single shared secret
+docs/DEPLOY.md:178:`DATAQ_AUTH_TOKEN`.</pre></div><button class="expand-btn">Show more</button></div></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-42-03-767Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-42-03-767Z" class="timestamp-link"><time datetime="2026-08-31T00:42:03.767Z" data-timestamp="2026-08-31T00:42:03.767Z">2026-08-31T00:42:03.767Z</time></a></div><div class="message-content">
+<div class="thinking"><div class="thinking-label">Thinking</div></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-42-05-217Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-42-05-217Z" class="timestamp-link"><time datetime="2026-08-31T00:42:05.217Z" data-timestamp="2026-08-31T00:42:05.217Z">2026-08-31T00:42:05.217Z</time></a></div><div class="message-content">
+<div class="tool-use bash-tool" data-tool-id="toolu_012i9M7odrsfg3w2Bg6QU1pq">
+<div class="tool-header"><span class="tool-icon">$</span> Bash</div><div class="truncatable"><div class="truncatable-content"><pre class="bash-command">echo &#34;=== config.py ===&#34; &amp;&amp; cat backend/src/dataq/config.py &amp;&amp; echo &#34;=== users.py ===&#34; &amp;&amp; cat backend/src/dataq/api/users.py &amp;&amp; echo &#34;=== newuser.py ===&#34; &amp;&amp; cat backend/src/dataq/api/newuser.py</pre></div><button class="expand-btn">Show more</button></div>
+</div></div></div>
+<div class="message tool-reply" id="msg-2026-08-31T00-42-05-267Z"><div class="message-header"><span class="role-label">Tool reply</span><a href="#msg-2026-08-31T00-42-05-267Z" class="timestamp-link"><time datetime="2026-08-31T00:42:05.267Z" data-timestamp="2026-08-31T00:42:05.267Z">2026-08-31T00:42:05.267Z</time></a></div><div class="message-content"><div class="tool-result"><div class="truncatable"><div class="truncatable-content"><pre>=== config.py ===
+&quot;&quot;&quot;Application configuration. All settings are env-overridable (prefix ``DATAQ_``).&quot;&quot;&quot;
+
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+from typing import Literal
+
+from pydantic import AliasChoices, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix=&quot;DATAQ_&quot;, env_file=&quot;.env&quot;, extra=&quot;ignore&quot;)
+
+    # Where all state lives. A single directory so deployment is &quot;mount one volume&quot;.
+    data_dir: Path = Path(&quot;./data&quot;)
+
+    # Which StorageBackend to use for dataset versions.
+    #   parquet -&gt; immutable Parquet parts (resumable jobs, S3-portable)  [default]
+    #   duckdb  -&gt; tables inside one .duckdb file (single-file, easy to host)
+    storage: Literal[&quot;parquet&quot;, &quot;duckdb&quot;] = &quot;parquet&quot;
+
+    # DuckDB runtime limits. Kept modest so a laptop stays responsive on 10GB files.
+    duckdb_memory_limit: str = &quot;4GB&quot;
+    duckdb_threads: int = 4
+
+    # Job execution.
+    job_workers: int = 2
+    batch_rows: int = 100_000
+    checkpoint_every_batches: int = 5
+
+    # Profiling.
+    profile_sample_rows: int = 10_000
+    dry_run_rows: int = 1_000
+
+    # Directories the file browser may list, colon-separated. Browsing is
+    # confined to these, so a hosted deployment cannot be walked from the UI.
+    # Unset means the user&#x27;s home directory plus the working directory, which is
+    # what you want when the &quot;server&quot; is your own laptop.
+    browse_roots: str | None = None
+    # Cap on files uploaded through the browser. Server-side files are read in
+    # place by DuckDB and are not subject to this.
+    max_upload_mb: int = 2_048
+    # Whether an import may name an s3:// or https:// source. Off by default:
+    # it makes the server issue outbound requests on a caller&#x27;s behalf.
+    allow_remote_uris: bool = False
+
+    # Access control. Unset by default so a laptop instance needs no ceremony;
+    # a hosted one sets both, and `require_auth` makes deploying it open an
+    # error rather than an oversight.
+    auth_token: str | None = None
+    require_auth: bool = False
+    # &quot;name:hash&quot; entries, comma or newline separated; see api/users.py. Unset
+    # means the built-in account.
+    users: str | None = None
+    # Signs session tokens. Unset means a key kept in the data directory, so
+    # sessions survive a restart without anything to configure.
+    session_secret: str | None = None
+    session_hours: int = 24 * 14
+
+    # Agent / LLM plugins. Accepts the conventional bare ANTHROPIC_API_KEY as
+    # well as the prefixed name -- the SDK reads the bare one, so only honouring
+    # DATAQ_ANTHROPIC_API_KEY meant the agent refused to start on a host where
+    # everything else was configured correctly.
+    anthropic_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(&quot;DATAQ_ANTHROPIC_API_KEY&quot;, &quot;ANTHROPIC_API_KEY&quot;),
+    )
+    model: str = &quot;claude-opus-5&quot;
+
+    # Built frontend bundle. Served at / when present, so production is a single
+    # container. Unset in dev, where Vite serves the SPA and proxies /api.
+    static_dir: Path | None = None
+
+    @property
+    def catalog_path(self) -&gt; Path:
+        return self.data_dir / &quot;catalog.sqlite&quot;
+
+    @property
+    def warehouse_path(self) -&gt; Path:
+        &quot;&quot;&quot;The .duckdb file: the warehouse in duckdb storage mode, and the home of
+        the external-plugin result cache in both modes.&quot;&quot;&quot;
+        return self.data_dir / &quot;warehouse.duckdb&quot;
+
+    @property
+    def lake_dir(self) -&gt; Path:
+        return self.data_dir / &quot;lake&quot;
+
+    @property
+    def upload_dir(self) -&gt; Path:
+        return self.data_dir / &quot;uploads&quot;
+
+    def resolved_browse_roots(self) -&gt; list[Path]:
+        &quot;&quot;&quot;Directories the browser may list. Always includes the upload dir, so
+        files sent from the browser are visible to it afterwards.&quot;&quot;&quot;
+        if self.browse_roots:
+            roots = [Path(p).expanduser() for p in self.browse_roots.split(&quot;:&quot;) if p.strip()]
+        else:
+            roots = [Path.home(), Path.cwd()]
+        # Created eagerly: a root that does not exist is dropped below, and an
+        # upload would then land somewhere the browser cannot show.
+        self.upload_dir.mkdir(parents=True, exist_ok=True)
+        roots.append(self.upload_dir)
+        seen: list[Path] = []
+        for r in roots:
+            try:
+                resolved = r.resolve()
+            except OSError:
+                continue
+            if resolved.is_dir() and resolved not in seen:
+                seen.append(resolved)
+        return seen
+
+    def ensure_dirs(self) -&gt; None:
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.lake_dir.mkdir(parents=True, exist_ok=True)
+        self.upload_dir.mkdir(parents=True, exist_ok=True)
+
+
+@lru_cache
+def get_settings() -&gt; Settings:
+    return Settings()
+=== users.py ===
+&quot;&quot;&quot;Usernames and passwords, and the sessions they buy.
+
+The shared token in :mod:`dataq.api.auth` is the right shape for one person on
+one laptop, and the wrong shape for a URL you send to a colleague: there is
+nothing to type into a browser, no way to tell two people apart, and revoking
+access means changing the secret for everyone.
+
+This adds the smallest thing that fixes that. A fixed list of users, each with a
+password hash; a login endpoint that exchanges a password for a session token;
+and a token the browser can keep. Everyone sees the same datasets -- the point
+is to keep the instance off the public internet, not to model permissions.
+
+Two decisions worth stating, because both could reasonably have gone the other
+way in a prototype:
+
+* **Passwords are hashed, not stored.** scrypt, from the standard library, with
+  a per-password salt. A hard-coded list is fine; a hard-coded *password* would
+  mean the repository, every clone of it, and every terminal that ever printed
+  the config all hold the credential itself.
+* **Sessions are signed, not stored.** A token carries its own username and
+  expiry with an HMAC over both, so there is no session table to grow, and a
+  restart does not log everybody out -- the signing key lives in the data
+  directory, beside the data it protects.
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import base64
+import contextlib
+import hashlib
+import hmac
+import json
+import os
+import secrets
+import time
+from pathlib import Path
+
+# scrypt parameters. These are the interactive-login numbers from the original
+# paper: ~16MB and a few tens of milliseconds, which is nothing to a person
+# logging in and a great deal to someone working through a stolen hash.
+SCRYPT_N = 1 &lt;&lt; 14
+SCRYPT_R = 8
+SCRYPT_P = 1
+SALT_BYTES = 16
+
+SESSION_PREFIX = &quot;dq1&quot;
+DEFAULT_SESSION_HOURS = 24 * 14
+
+
+def _b64(raw: bytes) -&gt; str:
+    return base64.urlsafe_b64encode(raw).decode().rstrip(&quot;=&quot;)
+
+
+def _unb64(text: str) -&gt; bytes:
+    return base64.urlsafe_b64decode(text + &quot;=&quot; * (-len(text) % 4))
+
+
+# The starting account, so a fresh instance is usable without configuration.
+# Only the hash is here: a hard-coded list is a reasonable prototype shortcut,
+# but a hard-coded password would put the credential itself in the repository,
+# in every clone, and in every terminal that ever printed the file. Replace or
+# extend this with DATAQ_USERS, which takes the same &quot;name:hash&quot; entries.
+DEFAULT_USERS: dict[str, str] = {
+    &quot;dmitry&quot;: (
+        &quot;scrypt$1AEo1R6t2u61DNI3LjV2HQ$yzy4ggSnQ0bJmj3wR1NfD80R_NABW9nOtUOzYhwJ&quot;
+        &quot;9Bjp97fARl1D_xjzZeRPS_1ojGvMJShps6IZyXbj1SfdKw&quot;
+    ),
+}
+
+
+def resolve_users(configured: str | None) -&gt; dict[str, str]:
+    &quot;&quot;&quot;Configured users when there are any, the built-in one otherwise.
+
+    Replacing rather than merging: if someone sets DATAQ_USERS on a deployment,
+    leaving a default account quietly enabled alongside it would be the opposite
+    of what they asked for.
+    &quot;&quot;&quot;
+    return parse_users(configured) or dict(DEFAULT_USERS)
+
+
+# --------------------------------------------------------------------------- #
+# passwords
+# --------------------------------------------------------------------------- #
+def hash_password(password: str, salt: bytes | None = None) -&gt; str:
+    &quot;&quot;&quot;``scrypt$&lt;salt&gt;$&lt;hash&gt;``, safe to commit and to print.&quot;&quot;&quot;
+    salt = salt or secrets.token_bytes(SALT_BYTES)
+    derived = hashlib.scrypt(password.encode(), salt=salt, n=SCRYPT_N,
+                             r=SCRYPT_R, p=SCRYPT_P)
+    return f&quot;scrypt${_b64(salt)}${_b64(derived)}&quot;
+
+
+def verify_password(password: str, stored: str) -&gt; bool:
+    &quot;&quot;&quot;Check a password against a stored hash, in constant time.
+
+    A malformed or empty hash is a failure rather than an error: this runs on an
+    unauthenticated path, so a bad entry in the user list must not become a way
+    to crash the login endpoint.
+    &quot;&quot;&quot;
+    try:
+        scheme, salt_b64, expected = stored.split(&quot;$&quot;, 2)
+        if scheme != &quot;scrypt&quot;:
+            return False
+        salt = _unb64(salt_b64)
+    except (ValueError, TypeError):
+        return False
+    derived = hashlib.scrypt(password.encode(), salt=salt, n=SCRYPT_N,
+                             r=SCRYPT_R, p=SCRYPT_P)
+    return hmac.compare_digest(_b64(derived), expected)
+
+
+def parse_users(spec: str | None) -&gt; dict[str, str]:
+    &quot;&quot;&quot;``name:hash`` entries, separated by commas or newlines.
+
+    Hashes contain ``$`` and base64, never ``:``, so splitting on the first
+    colon is unambiguous.
+    &quot;&quot;&quot;
+    users: dict[str, str] = {}
+    for entry in (spec or &quot;&quot;).replace(&quot;\n&quot;, &quot;,&quot;).split(&quot;,&quot;):
+        entry = entry.strip()
+        if not entry or entry.startswith(&quot;#&quot;):
+            continue
+        name, _, digest = entry.partition(&quot;:&quot;)
+        if name.strip() and digest.strip():
+            users[name.strip()] = digest.strip()
+    return users
+
+
+def authenticate(username: str, password: str, users: dict[str, str]) -&gt; bool:
+    &quot;&quot;&quot;Whether these credentials are good.
+
+    An unknown username is still checked against a dummy hash. Returning early
+    would make a wrong username measurably faster than a wrong password, which
+    is a free list of who has an account.
+    &quot;&quot;&quot;
+    stored = users.get(username)
+    if stored is None:
+        verify_password(password, _DUMMY_HASH)
+        return False
+    return verify_password(password, stored)
+
+
+# A real hash of a random string, so the not-a-user path does the same work as
+# the wrong-password path.
+_DUMMY_HASH = hash_password(secrets.token_urlsafe(16))
+
+
+# --------------------------------------------------------------------------- #
+# sessions
+# --------------------------------------------------------------------------- #
+def session_secret(data_dir: Path, configured: str | None = None) -&gt; bytes:
+    &quot;&quot;&quot;The key sessions are signed with.
+
+    Kept in the data directory rather than generated per process, so restarting
+    the server -- or a code deploy -- does not sign everyone out. Created on
+    first use with owner-only permissions.
+    &quot;&quot;&quot;
+    if configured:
+        return configured.encode()
+    path = Path(data_dir) / &quot;session_secret&quot;
+    if path.exists():
+        return path.read_bytes().strip()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    secret = secrets.token_hex(32).encode()
+    path.write_bytes(secret)
+    # A filesystem without modes still has the data directory guarding it.
+    with contextlib.suppress(OSError):
+        os.chmod(path, 0o600)
+    return secret
+
+
+def issue_session(username: str, secret: bytes, hours: int = DEFAULT_SESSION_HOURS) -&gt; str:
+    payload = json.dumps({&quot;u&quot;: username, &quot;exp&quot;: int(time.time()) + hours * 3600},
+                         separators=(&quot;,&quot;, &quot;:&quot;)).encode()
+    body = _b64(payload)
+    sig = hmac.new(secret, body.encode(), hashlib.sha256).digest()
+    return f&quot;{SESSION_PREFIX}.{body}.{_b64(sig)}&quot;
+
+
+def read_session(token: str, secret: bytes) -&gt; str | None:
+    &quot;&quot;&quot;The username a token vouches for, or None if it does not.
+
+    Signature first, then expiry: an unsigned token&#x27;s claims are not worth
+    reading, including its own expiry.
+    &quot;&quot;&quot;
+    try:
+        prefix, body, sig = token.split(&quot;.&quot;, 2)
+    except ValueError:
+        return None
+    if prefix != SESSION_PREFIX:
+        return None
+    expected = hmac.new(secret, body.encode(), hashlib.sha256).digest()
+    if not hmac.compare_digest(_b64(expected), sig):
+        return None
+    try:
+        payload = json.loads(_unb64(body))
+        if int(payload[&quot;exp&quot;]) &lt; time.time():
+            return None
+        return str(payload[&quot;u&quot;])
+    except (ValueError, KeyError, TypeError):
+        return None
+=== newuser.py ===
+&quot;&quot;&quot;Generate a user entry for DATAQ_USERS.
+
+    uv run python -m dataq.api.newuser alice
+
+Prints ``alice:scrypt$...``. The password is read without echo and never
+written anywhere: the hash is the only thing that leaves this process.
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import getpass
+import secrets
+import string
+import sys
+
+from .users import hash_password
+
+
+def main(argv: list[str] | None = None) -&gt; int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv:
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    username = argv[0]
+
+    password = getpass.getpass(&quot;Password (blank to generate one): &quot;)
+    generated = not password
+    if generated:
+        alphabet = string.ascii_lowercase + string.digits
+        password = &quot;-&quot;.join(
+            &quot;&quot;.join(secrets.choice(alphabet) for _ in range(5)) for _ in range(5)
+        )
+    elif password != getpass.getpass(&quot;Again: &quot;):
+        print(&quot;passwords do not match&quot;, file=sys.stderr)
+        return 1
+
+    if generated:
+        print(f&quot;\nPassword for {username}: {password}&quot;)
+        print(&quot;Write it down now -- it is not stored anywhere.\n&quot;)
+    print(f&quot;{username}:{hash_password(password)}&quot;)
+    return 0
+
+
+if __name__ == &quot;__main__&quot;:
+    raise SystemExit(main())</pre></div><button class="expand-btn">Show more</button></div></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-42-05-836Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-42-05-836Z" class="timestamp-link"><time datetime="2026-08-31T00:42:05.836Z" data-timestamp="2026-08-31T00:42:05.836Z">2026-08-31T00:42:05.836Z</time></a></div><div class="message-content">
+<div class="tool-use bash-tool" data-tool-id="toolu_01RyHR7DeKJz5CXtWuCecF7p">
+<div class="tool-header"><span class="tool-icon">$</span> Bash</div><div class="truncatable"><div class="truncatable-content"><pre class="bash-command">echo &#34;=== .env.example ===&#34; &amp;&amp; cat .env.example &amp;&amp; echo &#34;=== railway.json ===&#34; &amp;&amp; cat railway.json &amp;&amp; echo &#34;=== docker-compose ===&#34; &amp;&amp; cat docker-compose.yml &amp;&amp; echo &#34;=== auth.py ===&#34; &amp;&amp; cat backend/src/dataq/api/auth.py</pre></div><button class="expand-btn">Show more</button></div>
+</div></div></div>
+<div class="message tool-reply" id="msg-2026-08-31T00-42-05-890Z"><div class="message-header"><span class="role-label">Tool reply</span><a href="#msg-2026-08-31T00-42-05-890Z" class="timestamp-link"><time datetime="2026-08-31T00:42:05.890Z" data-timestamp="2026-08-31T00:42:05.890Z">2026-08-31T00:42:05.890Z</time></a></div><div class="message-content"><div class="tool-result"><div class="truncatable"><div class="truncatable-content"><pre>=== .env.example ===
+# Storage backend for dataset versions.
+#   parquet  immutable Parquet parts under $DATAQ_DATA_DIR/lake  (default)
+#            free checkpoints, resumable jobs, portable to S3
+#   duckdb   tables inside one warehouse.duckdb -- easiest to host remotely,
+#            but DuckDB is single-writer, so no out-of-process job workers
+DATAQ_STORAGE=parquet
+
+# All state (catalog, lake, warehouse) lives under here. Mount one volume.
+DATAQ_DATA_DIR=./data
+
+# DuckDB runtime limits.
+DATAQ_DUCKDB_MEMORY_LIMIT=4GB
+DATAQ_DUCKDB_THREADS=4
+
+# Job execution.
+DATAQ_JOB_WORKERS=2
+DATAQ_BATCH_ROWS=100000
+DATAQ_CHECKPOINT_EVERY_BATCHES=5
+
+# Directories the file browser may list, colon-separated. Browsing is confined to
+# these, so a hosted deployment cannot be walked from the UI. Unset means your home
+# directory plus the working directory, which is right when the server is your laptop.
+# DATAQ_BROWSE_ROOTS=/srv/data:/mnt/datasets
+
+# Cap on files uploaded through the browser. Files already on the server are read
+# in place by DuckDB and are not subject to this.
+DATAQ_MAX_UPLOAD_MB=2048
+
+# Access control. Leave unset on a laptop nobody else can reach. On a hosted
+# instance set both: REQUIRE_AUTH makes the app refuse to start without a token,
+# so it cannot end up on a public URL wide open.
+#   python3 -c &quot;import secrets; print(secrets.token_urlsafe(32))&quot;
+# DATAQ_AUTH_TOKEN=
+# DATAQ_REQUIRE_AUTH=false
+
+# Whether an import may name an s3:// or https:// source. Off by default: it
+# makes the server fetch a URL on a caller&#x27;s behalf.
+DATAQ_ALLOW_REMOTE_URIS=false
+
+# Required only for external-mode (LLM-backed) plugins. Without it, those
+# plugins fall back to a deterministic fake client so the code path stays live.
+# ANTHROPIC_API_KEY=sk-ant-...
+DATAQ_MODEL=claude-opus-5
+
+# Serve a prebuilt frontend bundle from the API process (production).
+# DATAQ_STATIC_DIR=/app/static
+=== railway.json ===
+{
+  &quot;$schema&quot;: &quot;https://railway.com/railway.schema.json&quot;,
+  &quot;build&quot;: {
+    &quot;builder&quot;: &quot;dockerfile&quot;,
+    &quot;dockerfilePath&quot;: &quot;./Dockerfile&quot;
+  },
+  &quot;deploy&quot;: {
+    &quot;healthcheckPath&quot;: &quot;/api/health&quot;,
+    &quot;healthcheckTimeout&quot;: 120,
+    &quot;restartPolicyType&quot;: &quot;on_failure&quot;,
+    &quot;restartPolicyMaxRetries&quot;: 3,
+    &quot;numReplicas&quot;: 1
+  }
+}
+=== docker-compose ===
+services:
+  dataq:
+    build: .
+    ports:
+      - &quot;8000:8000&quot;
+    volumes:
+      - dataq-data:/data
+    environment:
+      # parquet: immutable Parquet parts, resumable jobs, S3-portable (default)
+      # duckdb:  one .duckdb file -- simplest to host, but single-writer
+      DATAQ_STORAGE: ${DATAQ_STORAGE:-parquet}
+      DATAQ_DATA_DIR: /data
+      # Both spellings work; the app reads either.
+      DATAQ_ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Mirror the hosted setup: without this the file browser would default to
+      # $HOME and the working directory, i.e. the whole app tree.
+      DATAQ_BROWSE_ROOTS: /data/uploads
+      DATAQ_AUTH_TOKEN: ${DATAQ_AUTH_TOKEN:-}
+    restart: unless-stopped
+
+volumes:
+  dataq-data:
+=== auth.py ===
+&quot;&quot;&quot;Shared-token access control.
+
+DataQ started as a laptop tool, where the only client is the person running it.
+The moment it is reachable from the internet that assumption inverts: the API can
+read server-side files, write uploads, delete datasets, and spend money on the
+Anthropic key. None of that should be anonymous.
+
+The design is deliberately the smallest thing that is actually safe for a
+single-user deployment: one shared token, checked in constant time, on every
+route except the health probe. No accounts, no sessions, no expiry -- because
+there is one user, and inventing more would be more surface, not less.
+
+``require_auth`` is the safety catch. A hosted deployment sets it, and the app
+then refuses to start without a token, so an instance cannot end up on a public
+URL wide open because someone forgot a variable.
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import hmac
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+
+from .users import parse_users, read_session
+
+# Railway (and any other platform) probes this unauthenticated to decide whether
+# the deployment is live. It reveals only the storage mode and a plugin count.
+# /api/auth/login is necessarily open: it is where a credential is exchanged for
+# a session, so requiring one to reach it would be a closed loop.
+PUBLIC_PATHS = frozenset({&quot;/api/health&quot;, &quot;/api/auth/login&quot;})
+
+PROTECTED_PREFIX = &quot;/api/&quot;
+
+
+class MisconfiguredAuth(RuntimeError):
+    &quot;&quot;&quot;Raised at startup when auth is required but no token is set.&quot;&quot;&quot;
+
+
+def check_settings(settings) -&gt; None:
+    &quot;&quot;&quot;Fail fast rather than serve an unprotected API.
+
+    Called during app construction: a misconfigured deployment should never
+    reach the point of accepting a request.
+    &quot;&quot;&quot;
+    # The built-in account deliberately does not satisfy this. Its hash is in
+    # the repository, so every clone knows the account exists and shares its
+    # password -- fine as a starting point on a laptop, not something a public
+    # deployment should be able to rely on without saying so.
+    if settings.require_auth and not (settings.auth_token or parse_users(settings.users)):
+        raise MisconfiguredAuth(
+            &quot;DATAQ_REQUIRE_AUTH is set but there is no deployment credential: &quot;
+            &quot;no DATAQ_AUTH_TOKEN and no DATAQ_USERS. The built-in account does &quot;
+            &quot;not count -- its password hash is in the source, so it is not a &quot;
+            &quot;secret. Set one, or unset DATAQ_REQUIRE_AUTH for a local instance &quot;
+            &quot;nobody else can reach.&quot;
+        )
+
+
+def extract_token(request: Request) -&gt; str | None:
+    &quot;&quot;&quot;Bearer header, or a query parameter for EventSource.
+
+    The browser&#x27;s EventSource cannot set headers, and ``/api/jobs/{id}/stream``
+    is an SSE endpoint, so the token has to be able to travel in the query
+    string for that one case. It is the same secret either way; the tradeoff is
+    that it can appear in server logs.
+    &quot;&quot;&quot;
+    header = request.headers.get(&quot;authorization&quot;, &quot;&quot;)
+    if header.lower().startswith(&quot;bearer &quot;):
+        return header[7:].strip()
+    return request.query_params.get(&quot;token&quot;)
+
+
+class TokenAuthMiddleware(BaseHTTPMiddleware):
+    &quot;&quot;&quot;Require a session or the shared token on every API route but the probe.
+
+    Two credentials, because they answer different questions. A person logs in
+    and gets a session; a script, a probe or a `curl` in the deploy docs carries
+    the shared token. Either is sufficient, and an instance may configure only
+    one.
+    &quot;&quot;&quot;
+
+    def __init__(self, app, token: str | None, secret: bytes | None) -&gt; None:
+        super().__init__(app)
+        self._token = token
+        self._secret = secret
+
+    def _allows(self, supplied: str) -&gt; str | None:
+        &quot;&quot;&quot;The identity a credential establishes, or None.&quot;&quot;&quot;
+        if self._secret is not None:
+            user = read_session(supplied, self._secret)
+            if user is not None:
+                return user
+        # compare_digest keeps the check constant-time; a plain == leaks the
+        # token a character at a time to anyone willing to measure.
+        if self._token and hmac.compare_digest(supplied, self._token):
+            return &quot;token&quot;
+        return None
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        # The SPA and its assets are not secrets; the data behind /api is.
+        if not path.startswith(PROTECTED_PREFIX) or path in PUBLIC_PATHS:
+            return await call_next(request)
+
+        supplied = extract_token(request)
+        identity = self._allows(supplied) if supplied else None
+        if identity is None:
+            return JSONResponse(
+                {&quot;detail&quot;: &quot;authentication required&quot;},
+                status_code=401,
+                headers={&quot;WWW-Authenticate&quot;: &quot;Bearer&quot;},
+            )
+        # Routes that want to know who is asking can read it; none do yet, since
+        # every user sees the same data.
+        request.state.user = identity
+        return await call_next(request)</pre></div><button class="expand-btn">Show more</button></div></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-42-08-820Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-42-08-820Z" class="timestamp-link"><time datetime="2026-08-31T00:42:08.820Z" data-timestamp="2026-08-31T00:42:08.820Z">2026-08-31T00:42:08.820Z</time></a></div><div class="message-content">
+<div class="thinking"><div class="thinking-label">Thinking</div></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-42-09-526Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-42-09-526Z" class="timestamp-link"><time datetime="2026-08-31T00:42:09.526Z" data-timestamp="2026-08-31T00:42:09.526Z">2026-08-31T00:42:09.526Z</time></a></div><div class="message-content">
+<div class="tool-use bash-tool" data-tool-id="toolu_017oAw9bW48RAQShG3iztcRY">
+<div class="tool-header"><span class="tool-icon">$</span> Bash</div><div class="truncatable"><div class="truncatable-content"><pre class="bash-command">echo &#34;=== Makefile ===&#34; &amp;&amp; cat Makefile &amp;&amp; echo &#34;=== README 200-260 ===&#34; &amp;&amp; sed -n &#39;200,260p&#39; README.md &amp;&amp; echo &#34;=== README 420,500 ===&#34; &amp;&amp; sed -n &#39;420,500p&#39; README.md</pre></div><button class="expand-btn">Show more</button></div>
+</div></div></div>
+<div class="message tool-reply" id="msg-2026-08-31T00-42-09-578Z"><div class="message-header"><span class="role-label">Tool reply</span><a href="#msg-2026-08-31T00-42-09-578Z" class="timestamp-link"><time datetime="2026-08-31T00:42:09.578Z" data-timestamp="2026-08-31T00:42:09.578Z">2026-08-31T00:42:09.578Z</time></a></div><div class="message-content"><div class="tool-result"><div class="truncatable"><div class="truncatable-content"><pre>=== Makefile ===
+.PHONY: help setup dev dev-api dev-web test lint fmt types build docker docker-run demo clean \
+        railway-deploy railway-logs data-size data-bundle data-push data-replace data-pull data-reset
+.DEFAULT_GOAL := help
+
+BACKEND := backend
+FRONTEND := frontend
+UV := uv --directory $(BACKEND)
+
+help: ## Show this help
+	@grep -hE &#x27;^[a-zA-Z_-]+:.*?## &#x27; $(MAKEFILE_LIST) \
+		| awk &#x27;BEGIN{FS=&quot;:.*?## &quot;}{printf &quot;  \033[36m%-12s\033[0m %s\n&quot;, $$1, $$2}&#x27;
+
+setup: ## Install all dependencies (uv resolves Python itself; Node must be installed)
+	$(UV) sync --extra dev
+	cd $(FRONTEND) &amp;&amp; npm ci
+
+dev: ## Run backend (:8000) and frontend (:5173) together
+	@echo &quot;api  -&gt; http://127.0.0.1:8000/api/health&quot;
+	@echo &quot;web  -&gt; http://127.0.0.1:5173&quot;
+	@trap &#x27;kill 0&#x27; EXIT INT TERM; \
+	  $(MAKE) dev-api &amp; $(MAKE) dev-web &amp; wait
+
+dev-api: ## Run only the backend, with reload
+	$(UV) run uvicorn dataq.api.app:app --reload --host 127.0.0.1 --port 8000
+
+dev-web: ## Run only the Vite dev server
+	cd $(FRONTEND) &amp;&amp; npm run dev
+
+test: ## Run the backend test suite (both storage backends)
+	$(UV) run pytest -q
+
+lint: ## Lint and type-check both sides
+	$(UV) run ruff check src tests
+	$(UV) run mypy src || true
+	cd $(FRONTEND) &amp;&amp; npm run typecheck &amp;&amp; npm run lint
+
+fmt: ## Auto-fix lint issues
+	$(UV) run ruff check --fix src tests
+	$(UV) run ruff format src tests
+
+types: ## Regenerate frontend types from the live OpenAPI document
+	@echo &quot;requires &#x27;make dev-api&#x27; running in another shell&quot;
+	cd $(FRONTEND) &amp;&amp; npm run gen:types
+
+build: ## Build the production frontend bundle
+	cd $(FRONTEND) &amp;&amp; npm run build
+
+docker: ## Build the single-container image
+	docker build -t dataq:latest .
+
+docker-run: ## Run the image with a local data volume
+	docker run --rm -p 8000:8000 -v $$(pwd)/data:/data \
+		-e DATAQ_STORAGE=$${DATAQ_STORAGE:-parquet} dataq:latest
+
+demo: ## Generate sample taxi + auth datasets under ./sample-data
+	$(UV) run python -c &quot;import sys; sys.path.insert(0,&#x27;.&#x27;); \
+from tests.fixtures import write_taxi_csv, write_auth_csv; from pathlib import Path; \
+d=Path(&#x27;../sample-data&#x27;); print(write_taxi_csv(d/&#x27;taxi.csv&#x27;, rows=20000)); \
+print(write_auth_csv(d/&#x27;auth.csv&#x27;, rows=15000))&quot;
+
+# --- Railway ----------------------------------------------------------------
+# Data lives on a Railway volume mounted at /data, so it survives code deploys.
+# These targets move data between that volume and ./data on your laptop.
+BUNDLE := dataq-data.tgz
+
+railway-deploy: ## Build and deploy the current code to Railway
+	railway up
+
+railway-logs: ## Tail the deployed service&#x27;s logs
+	railway logs
+
+data-size: ## Measure ./data against the volume you are paying for
+	@echo &quot;Railway volumes: 0.5GB trial, 5GB hobby, 50GB pro&quot;
+	@test -d data &amp;&amp; du -sh data || echo &quot;no ./data yet - run &#x27;make demo&#x27; or import something&quot;
+	@test -d data &amp;&amp; du -sh data/* 2&gt;/dev/null | sort -h || true
+
+data-bundle: ## Tar ./data into $(BUNDLE)
+	@test -d data || { echo &quot;no ./data to bundle&quot;; exit 1; }
+	tar czf $(BUNDLE) -C data .
+	@ls -lh $(BUNDLE)
+
+data-push: data-bundle ## Ship ./data to Railway, merging into what is there
+	railway volume files upload ./$(BUNDLE) /_inbox/$(BUNDLE)
+	railway restart
+	@echo &quot;pushed. the entrypoint unpacks it before the server starts.&quot;
+
+data-replace: ## Ship ./data to Railway, REPLACING everything on the volume
+	@test -d data || { echo &quot;no ./data to bundle&quot;; exit 1; }
+	tar czf dataq-data.replace.tgz -C data .
+	@ls -lh dataq-data.replace.tgz
+	@echo &quot;&#x27;.replace.&#x27; in the name tells the entrypoint to wipe /data first.&quot;
+	railway volume files upload ./dataq-data.replace.tgz /_inbox/dataq-data.replace.tgz
+	railway restart
+
+data-pull: ## Download the deployed data to ./data-from-railway
+	@echo &quot;note: catalog.sqlite is in WAL mode. For a guaranteed-clean copy,&quot;
+	@echo &quot;      pause the service first. The parquet lake is immutable and&quot;
+	@echo &quot;      safe to copy while running.&quot;
+	mkdir -p data-from-railway
+	railway volume files download / ./data-from-railway
+
+data-reset: ## Show how to wipe the deployed data (you must run it yourself)
+	@echo &quot;Two ways to reset the deployed data:&quot;
+	@echo
+	@echo &quot;  1. Ship a fresh copy over the top of it:&quot;
+	@echo &quot;       make data-replace&quot;
+	@echo
+	@echo &quot;  2. Delete the files on the volume directly:&quot;
+	@echo &quot;       railway volume files delete /catalog.sqlite&quot;
+	@echo &quot;       railway volume files delete /warehouse.duckdb&quot;
+	@echo &quot;       railway volume files delete /lake&quot;
+	@echo &quot;       railway restart&quot;
+	@echo
+	@echo &quot;Option 2 is not scripted here on purpose: &#x27;railway volume files&quot;
+	@echo &quot;delete&#x27; refuses to run when an AI agent invokes it, and a target&quot;
+	@echo &quot;that silently fails for me but works for you is worse than none.&quot;
+
+clean: ## Remove build artefacts and local state
+	rm -rf $(FRONTEND)/dist $(BACKEND)/.pytest_cache $(BACKEND)/.ruff_cache
+	find . -name __pycache__ -type d -prune -exec rm -rf {} +
+	rm -f $(BUNDLE) dataq-data.replace.tgz
+=== README 200-260 ===
+  but a whole-dataset `share()` counts events that come after the row it
+  describes, and a calendar bucket includes the rest of today. That is often
+  the question you want — it is recorded on the column rather than left to be
+  rediscovered.
+
+Rolling totals in the feature table are read off buckets, so they stop one bucket
+short: `n_30d` means the 30 days *before* today, never the current day, whose
+later events would otherwise leak backwards.
+
+Feature stores were the reference for the interface — Tecton&#x27;s
+`Aggregation(column, function, time_window)` is nearly the same object, its tiling
+is the feature table, and Chalk&#x27;s `Windowed` is the `over 1d,7d,30d` fan-out. The
+serving half of those systems is deliberately absent: features here are columns
+on a dataset, not a serving surface.
+
+### Signing in
+
+A hosted instance requires a username and password. The built-in account is
+`dmitry`; its password was generated at setup and is not in the repository —
+only its scrypt hash is, in `backend/src/dataq/api/users.py`.
+
+```bash
+# Add or replace accounts without touching the code:
+cd backend &amp;&amp; uv run python -m dataq.api.newuser alice
+# prints  alice:scrypt$...  — put it in DATAQ_USERS
+```
+
+`DATAQ_USERS` takes `name:hash` entries separated by commas or newlines, and
+*replaces* the built-in account rather than adding to it. Everyone signed in
+sees the same datasets; the point is to keep the instance off the public
+internet, not to model permissions.
+
+Signing in exchanges the password for a session token, signed with a key kept in
+the data directory so a restart or a redeploy does not sign everybody out.
+Sessions last two weeks by default (`DATAQ_SESSION_HOURS`).
+
+The older shared `DATAQ_AUTH_TOKEN` still works alongside accounts — that is
+what the deploy scripts and `curl` examples use. Either credential is accepted.
+
+**The built-in account does not satisfy `DATAQ_REQUIRE_AUTH`.** Its hash is
+committed, so every clone knows the account and shares its password; a
+deployment must set `DATAQ_USERS` or `DATAQ_AUTH_TOKEN` of its own, and the app
+refuses to start otherwise rather than going live on a credential that is not a
+secret.
+
+### Deleting a dataset
+
+`DELETE /api/datasets/{id}`, or the button on the dataset page. Three things it
+does that the obvious implementation does not:
+
+- **Frees the disk.** The catalog only knows about rows; the parquet parts live
+  behind the storage backend. Deleting the metadata and leaving the bytes is how
+  a lake grows forever while the dataset list says nothing is there.
+- **Refuses to strand a derivation tree.** An aggregate built from a dataset
+  stays valid after its parent goes, but its provenance does not — so a parent
+  with children returns 409 naming them, and `?cascade=true` removes the subtree.
+  The UI asks first, listing what would go.
+- **Refuses to race a job.** Deleting under a live writer leaves a version row
+  pointing at files that no longer exist.
+
+Relatedly, a *failed* operation now leaves the catalog as it found it. The
+=== README 420,500 ===
+the two cases you might want are:
+
+| I want to… | Run |
+|---|---|
+| Ship a code change, leave data alone | `make railway-deploy` |
+| Ship code *and* data | `make railway-deploy &amp;&amp; make data-push` |
+
+The first deploy fails its healthcheck until you finish the setup below — the app
+refuses to start without an auth token, which is deliberate. Then, once, in the
+dashboard:
+
+1. **Add a volume** to the service with mount path `/data`. This is what makes
+   data outlive deploys; `DATAQ_DATA_DIR=/data` is already baked into the image.
+2. **Set variables** — `DATAQ_AUTH_TOKEN` (a long random string),
+   `DATAQ_REQUIRE_AUTH=true`, `DATAQ_BROWSE_ROOTS=/data/uploads`,
+   `DATAQ_STORAGE=parquet`, and `DATAQ_ANTHROPIC_API_KEY` if you want the agent.
+3. **Generate a domain** under Settings → Networking.
+
+Build settings and the `/api/health` healthcheck come from `railway.json`, which
+overrides the dashboard, so there is nothing to click for those.
+
+**Move data separately from code:**
+
+```bash
+make data-size      # what am I about to ship, and does it fit the volume?
+make data-push      # ./data  -&gt;  Railway, merged into what is there
+make data-replace   # ./data  -&gt;  Railway, wiping the volume first
+make data-pull      # Railway -&gt;  ./data-from-railway
+```
+
+`data-push` uploads a tarball to the volume and restarts the service; the
+container entrypoint unpacks it **before** uvicorn starts, because the running
+app holds `catalog.sqlite` open in WAL mode and replacing it underneath a live
+process risks corruption.
+
+A hosted instance needs `DATAQ_AUTH_TOKEN` set. Without it anyone who finds the
+URL can read server-side files and spend your Anthropic budget, which is why
+`DATAQ_REQUIRE_AUTH` makes the app refuse to start rather than come up open.
+
+## Development
+
+```bash
+make test     # pytest, parameterised over both storage backends
+make lint     # ruff + mypy, tsc + oxlint
+make types    # regenerate frontend types from the live OpenAPI document
+```
+
+## The agent
+
+The chat agent binds its tools to the **service layer**, not to HTTP, so it and the
+API cannot drift apart — they are two front ends over the same functions. Tool calls
+stream to the UI as they run, so the user watches the work rather than waiting on a
+verdict.
+
+Two permission scopes exist. `full` (the chat agent, driven by a human who can see
+and cancel jobs) can create aggregates, joins and transforms. `read_only` — handed to
+any agent-*backed plugin* — can query, profile and suggest but has no job-creating
+tools at all, which is the recursion guard: a plugin cannot spawn unbounded work.
+
+Before any request is sent the UI prices the run — tokens in the first request
+(counted by the API when a key is present, approximated otherwise) and a ceiling
+for the whole loop — and asks. The user is paying, so the decision is theirs.
+
+Set `ANTHROPIC_API_KEY` (or `DATAQ_ANTHROPIC_API_KEY` — both are read) to enable
+it. Everything else runs without one.
+
+## Status
+
+Implemented and tested: import, profiling and semantic typing, transforms in all
+three execution modes, the query layer, charts and maps, aggregates, joins, the
+typed chart grammar, the timeline view, the dashboard, the agent, and a
+Railway deployment with data decoupled from code.
+
+The agent&#x27;s tool surface and loop mechanics are covered by tests using a scripted
+model client (tool dispatch, the `tool_result` round-trip, parallel calls, refusals,
+the turn cap) — including the spec&#x27;s cybersecurity workflow driven end to end through
+agent tools. The loop has **not** been exercised against the live model; that needs an
+API key.
+
+Known gaps, in rough priority order:</pre></div><button class="expand-btn">Show more</button></div></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-42-09-642Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-42-09-642Z" class="timestamp-link"><time datetime="2026-08-31T00:42:09.642Z" data-timestamp="2026-08-31T00:42:09.642Z">2026-08-31T00:42:09.642Z</time></a></div><div class="message-content">
+<div class="tool-use bash-tool" data-tool-id="toolu_01QJhSKJK6oNiQBxCcThZytm">
+<div class="tool-header"><span class="tool-icon">$</span> Bash</div><div class="truncatable"><div class="truncatable-content"><pre class="bash-command">sed -n &#39;60,200p&#39; docs/DEPLOY.md</pre></div><button class="expand-btn">Show more</button></div>
+</div></div></div>
+<div class="message tool-reply" id="msg-2026-08-31T00-42-09-657Z"><div class="message-header"><span class="role-label">Tool reply</span><a href="#msg-2026-08-31T00-42-09-657Z" class="timestamp-link"><time datetime="2026-08-31T00:42:09.657Z" data-timestamp="2026-08-31T00:42:09.657Z">2026-08-31T00:42:09.657Z</time></a></div><div class="message-content"><div class="tool-result"><div class="truncatable"><div class="truncatable-content"><pre>the directory itself, so the path exists whether or not anything is mounted
+over it — which is also why the app runs fine locally with no volume at all.
+
+### 2. Add the volume
+
+In the Railway dashboard, on the service: `⌘K` → **New Volume** (or right-click
+the service → Add Volume). Set the **mount path** to:
+
+```
+/data
+```
+
+That single choice is what makes data survive deploys — `DATAQ_DATA_DIR=/data`
+is already baked into the image, so the catalog, the parquet lake and uploads
+all land on the volume.
+
+Volume sizes are 0.5 GB on Trial, 5 GB on Hobby, 50 GB on Pro. Check what you
+are about to ship first:
+
+```bash
+make data-size
+```
+
+### 3. Set the variables
+
+Service → **Variables**:
+
+| Variable | Value | Why |
+|---|---|---|
+| `DATAQ_AUTH_TOKEN` | a long random string | The shared secret the UI and API require |
+| `DATAQ_REQUIRE_AUTH` | `true` | Makes the app refuse to start without a token, so it can never be public and open |
+| `DATAQ_BROWSE_ROOTS` | `/data/uploads` | Without this the file browser defaults to `$HOME` and the working directory — inside the container, your whole app tree |
+| `DATAQ_STORAGE` | `parquet` | Immutable parquet parts; resumable imports |
+| `DATAQ_ANTHROPIC_API_KEY` | `sk-ant-…` | Only needed for the agent and LLM plugins |
+
+`DATAQ_DATA_DIR` is already set in the image. Generate a token with:
+
+```bash
+python3 -c &quot;import secrets; print(secrets.token_urlsafe(32))&quot;
+```
+
+### 4. Give it a URL
+
+Service → Settings → Networking → **Generate Domain**. Open it, and the UI will
+prompt once for the token and remember it in that browser.
+
+## The data workflow
+
+```bash
+make data-size      # what am I about to ship, and does it fit?
+make data-push      # ./data  -&gt;  Railway, merged into what is there
+make data-replace   # ./data  -&gt;  Railway, wiping the volume first
+make data-pull      # Railway -&gt;  ./data-from-railway
+```
+
+`data-push` tars `./data`, uploads it to `/_inbox` on the volume, and restarts
+the service. The container entrypoint unpacks it **before uvicorn starts** —
+which matters, because the running app holds `catalog.sqlite` open in WAL mode
+and `warehouse.duckdb` open for its whole lifetime. Replacing those files under
+a live process risks corrupting them; before the app opens anything, they are
+just files.
+
+The bundle is renamed to `*.applied-&lt;timestamp&gt;` once unpacked, so a later
+restart does not redo the restore.
+
+**Reset** is `make data-replace`. The `.replace.` in the bundle filename is what
+tells the entrypoint to clear `/data` first, so the intent travels with the file
+rather than living in an environment variable someone set weeks ago.
+
+`make data-reset` prints the direct-deletion commands rather than running them:
+`railway volume files delete` refuses to run when invoked by an AI agent, so a
+target that silently fails for an assistant but works for you would be worse
+than no target at all.
+
+### Pulling data back
+
+`make data-pull` downloads the volume to `./data-from-railway`. One caveat: the
+SQLite catalog is in WAL mode, so a copy taken while the service is running can
+catch a torn write. Pause the service first if you need a guaranteed-clean
+backup. The parquet lake itself is immutable and safe to copy hot.
+
+## Deploying code afterwards
+
+```bash
+make railway-deploy
+```
+
+New image, same volume. Your datasets are untouched — that is the whole point of
+the split.
+
+## Security notes
+
+The app has no user accounts; `DATAQ_AUTH_TOKEN` is a single shared secret
+checked in constant time on every `/api/*` route except `/api/health`, which
+stays open because Railway probes it. That is proportionate for a single-user
+tool, and it is genuinely necessary: without it, anyone who finds the URL can
+read server-side files, upload, delete datasets, and spend your Anthropic
+budget through the agent.
+
+Two things to be aware of even with the token set:
+
+- `POST /api/query/sql` is `SELECT`-only, but DuckDB can still read files from
+  a `SELECT` (`read_csv(&#x27;/etc/passwd&#x27;)`). Disabling that would also block
+  reading the parquet lake, so it is not available in this storage mode. Treat
+  the token as granting real access to the container, not just to the data.
+- `numReplicas` is pinned to 1 in `railway.json`. A volume attaches to one
+  replica, and both DuckDB and SQLite are single-writer, so scaling out would
+  corrupt data rather than distribute load.
+
+Imports and previews are confined to `DATAQ_BROWSE_ROOTS`; remote (`https://`,
+`s3://`) sources are refused unless you set `DATAQ_ALLOW_REMOTE_URIS=true`,
+because fetching them makes the server issue outbound requests on a caller&#x27;s
+behalf.
+
+## Troubleshooting
+
+**Healthcheck never passes.** Check the logs (`make railway-logs`). If the app
+exited with `MisconfiguredAuth`, you set `DATAQ_REQUIRE_AUTH` without
+`DATAQ_AUTH_TOKEN`.
+
+**The UI loads but every request 401s.** The stored token is stale. The prompt
+reappears automatically after a failed request; clear it manually with
+`localStorage.removeItem(&#x27;dataq.token&#x27;)` in the browser console.
+
+**Data vanished after a deploy.** The volume is not mounted, or is mounted
+somewhere other than `/data`. Check Service → Settings → Volumes.
+
+**Import fails with &quot;path is outside the browsable directories&quot;.** The file is
+not under `DATAQ_BROWSE_ROOTS`. Upload it through the UI (uploads land in
+`/data/uploads`, which is always browsable) or widen the roots.</pre></div><button class="expand-btn">Show more</button></div></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-42-15-719Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-42-15-719Z" class="timestamp-link"><time datetime="2026-08-31T00:42:15.719Z" data-timestamp="2026-08-31T00:42:15.719Z">2026-08-31T00:42:15.719Z</time></a></div><div class="message-content">
+<div class="thinking"><div class="thinking-label">Thinking</div></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-42-17-651Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-42-17-651Z" class="timestamp-link"><time datetime="2026-08-31T00:42:17.651Z" data-timestamp="2026-08-31T00:42:17.651Z">2026-08-31T00:42:17.651Z</time></a></div><div class="message-content">
+<div class="tool-use bash-tool" data-tool-id="toolu_01FoY8EgdjWfwf2okPr5yPPQ">
+<div class="tool-header"><span class="tool-icon">$</span> Bash</div><div class="truncatable"><div class="truncatable-content"><pre class="bash-command">ls -d data backend/data backend/.env .env 2&gt;&amp;1; echo &#34;---&#34;; cat .gitignore | head -20; echo &#34;--- docker entrypoint ---&#34;; ls docker &amp;&amp; sed -n &#39;1,60p&#39; docker/*entrypoint* 2&gt;/dev/null; echo &#34;--- Dockerfile env ---&#34;; grep -n &#34;ENV\|CMD\|ENTRYPOINT&#34; Dockerfile</pre></div><button class="expand-btn">Show more</button></div>
+</div></div></div>
+<div class="message tool-reply" id="msg-2026-08-31T00-42-19-050Z"><div class="message-header"><span class="role-label">Tool reply</span><a href="#msg-2026-08-31T00-42-19-050Z" class="timestamp-link"><time datetime="2026-08-31T00:42:19.050Z" data-timestamp="2026-08-31T00:42:19.050Z">2026-08-31T00:42:19.050Z</time></a></div><div class="message-content"><div class="tool-result"><div class="truncatable"><div class="truncatable-content"><pre>ls: .env: No such file or directory
+ls: backend/.env: No such file or directory
+backend/data
+data
+---
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Data &amp; secrets
+data/
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+--- docker entrypoint ---
+entrypoint.sh
+#!/bin/sh
+# Restore any pending data bundle, then start the server.
+#
+# Data reaches a hosted instance by being uploaded onto the volume (on Railway,
+# `railway volume files upload`). Something then has to unpack it, and that has
+# to happen *here* -- before uvicorn starts -- because the app holds
+# catalog.sqlite open in WAL mode and warehouse.duckdb open for the whole
+# process lifetime. Replacing those files under a live process risks corrupting
+# them. Before the app opens anything, it is just files.
+#
+# Drop a .tgz in $DATAQ_DATA_DIR/_inbox and restart the service.
+#
+# A bundle whose name contains &quot;.replace.&quot; wipes the data dir first -- that is
+# the reset. Anything else is unpacked over what is already there. Putting the
+# intent in the filename means it travels with the file, so a reset cannot be
+# caused (or missed) by a stale environment variable set weeks earlier.
+# DATAQ_RESTORE_MODE overrides, for the case where you cannot rename the file.
+set -eu
+
+DATA_DIR=&quot;${DATAQ_DATA_DIR:-/data}&quot;
+INBOX=&quot;$DATA_DIR/_inbox&quot;
+
+mkdir -p &quot;$INBOX&quot;
+
+for bundle in &quot;$INBOX&quot;/*.tgz &quot;$INBOX&quot;/*.tar.gz; do
+    # The glob is literal when nothing matches, so check the file exists.
+    [ -e &quot;$bundle&quot; ] || continue
+
+    name=&quot;$(basename &quot;$bundle&quot;)&quot;
+    mode=&quot;${DATAQ_RESTORE_MODE:-merge}&quot;
+    case &quot;$name&quot; in *.replace.*) mode=&quot;replace&quot; ;; esac
+    echo &quot;entrypoint: restoring $name (mode=$mode)&quot;
+
+    if [ &quot;$mode&quot; = &quot;replace&quot; ]; then
+        echo &quot;entrypoint: clearing $DATA_DIR first&quot;
+        # Everything except the inbox itself, which holds the bundle we are
+        # about to read.
+        find &quot;$DATA_DIR&quot; -mindepth 1 -maxdepth 1 ! -name &#x27;_inbox&#x27; -exec rm -rf {} +
+    fi
+
+    tar xzf &quot;$bundle&quot; -C &quot;$DATA_DIR&quot;
+
+    # Rename rather than delete: a restart must not redo the restore, and
+    # keeping the file means a bad bundle can still be inspected.
+    mv &quot;$bundle&quot; &quot;$bundle.applied-$(date +%Y%m%dT%H%M%S)&quot;
+    echo &quot;entrypoint: restore complete&quot;
+done
+
+# Railway (and most platforms) inject PORT. The fallback keeps `docker run`
+# working locally. Shell form is required here -- an exec-form CMD would pass
+# the string &quot;${PORT}&quot; through literally without expanding it.
+exec uvicorn dataq.api.app:app \
+    --host 0.0.0.0 \
+    --port &quot;${PORT:-8000}&quot; \
+    --app-dir backend/src
+--- Dockerfile env ---
+15:ENV PYTHONUNBUFFERED=1 \
+18:    UV_PROJECT_ENVIRONMENT=/app/.venv \
+48:  CMD python -c &quot;import os,urllib.request; urllib.request.urlopen(f\&quot;http://127.0.0.1:{os.environ.get(&#x27;PORT&#x27;,&#x27;8000&#x27;)}/api/health\&quot;)&quot;
+52:ENTRYPOINT [&quot;/usr/local/bin/entrypoint.sh&quot;]</pre></div><button class="expand-btn">Show more</button></div></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-42-26-166Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-42-26-166Z" class="timestamp-link"><time datetime="2026-08-31T00:42:26.166Z" data-timestamp="2026-08-31T00:42:26.166Z">2026-08-31T00:42:26.166Z</time></a></div><div class="message-content">
+<div class="thinking"><div class="thinking-label">Thinking</div></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-42-26-851Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-42-26-851Z" class="timestamp-link"><time datetime="2026-08-31T00:42:26.851Z" data-timestamp="2026-08-31T00:42:26.851Z">2026-08-31T00:42:26.851Z</time></a></div><div class="message-content">
+<div class="tool-use bash-tool" data-tool-id="toolu_01Cgovp59J3y6awjXJkwUbpJ">
+<div class="tool-header"><span class="tool-icon">$</span> Bash</div><div class="truncatable"><div class="truncatable-content"><pre class="bash-command">grep -n &#34;TokenAuthMiddleware\|session_secret\|check_settings\|add_middleware&#34; backend/src/dataq/api/app.py | head -30</pre></div><button class="expand-btn">Show more</button></div>
+</div></div></div>
+<div class="message tool-reply" id="msg-2026-08-31T00-42-26-908Z"><div class="message-header"><span class="role-label">Tool reply</span><a href="#msg-2026-08-31T00-42-26-908Z" class="timestamp-link"><time datetime="2026-08-31T00:42:26.908Z" data-timestamp="2026-08-31T00:42:26.908Z">2026-08-31T00:42:26.908Z</time></a></div><div class="message-content"><div class="tool-result"><div class="truncatable"><div class="truncatable-content"><pre>43:from .auth import TokenAuthMiddleware, check_settings
+74:    check_settings(settings)
+80:        app.add_middleware(
+81:            TokenAuthMiddleware, token=settings.auth_token,
+82:            secret=users.session_secret(settings.data_dir, settings.session_secret),
+85:    app.add_middleware(
+436:        secret = users.session_secret(settings.data_dir, settings.session_secret)</pre></div><button class="expand-btn">Show more</button></div></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-42-28-236Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-42-28-236Z" class="timestamp-link"><time datetime="2026-08-31T00:42:28.236Z" data-timestamp="2026-08-31T00:42:28.236Z">2026-08-31T00:42:28.236Z</time></a></div><div class="message-content">
+<div class="tool-use bash-tool" data-tool-id="toolu_01FSCUu9UsGW7sxyEMRcuwQr">
+<div class="tool-header"><span class="tool-icon">$</span> Bash</div><div class="truncatable"><div class="truncatable-content"><pre class="bash-command">sed -n &#39;70,95p&#39; backend/src/dataq/api/app.py</pre></div><button class="expand-btn">Show more</button></div>
+</div></div></div>
+<div class="message tool-reply" id="msg-2026-08-31T00-42-28-279Z"><div class="message-header"><span class="role-label">Tool reply</span><a href="#msg-2026-08-31T00-42-28-279Z" class="timestamp-link"><time datetime="2026-08-31T00:42:28.279Z" data-timestamp="2026-08-31T00:42:28.279Z">2026-08-31T00:42:28.279Z</time></a></div><div class="message-content"><div class="tool-result"><div class="truncatable"><div class="truncatable-content"><pre>        CTX = ctx
+
+    settings = ctx.settings if ctx is not None else get_settings()
+    # Refuse to start rather than serve an unprotected API on a public URL.
+    check_settings(settings)
+    # Auth engages when it is asked for -- a token, a user list, or the
+    # require_auth catch -- and not merely because a built-in account exists.
+    # A laptop instance nobody else can reach should not have a login screen,
+    # which is the property the shared-token design started with.
+    if settings.auth_token or settings.users or settings.require_auth:
+        app.add_middleware(
+            TokenAuthMiddleware, token=settings.auth_token,
+            secret=users.session_secret(settings.data_dir, settings.session_secret),
+        )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[&quot;http://localhost:5173&quot;, &quot;http://127.0.0.1:5173&quot;],
+        allow_methods=[&quot;*&quot;],
+        allow_credentials=True,
+        allow_headers=[&quot;*&quot;],
+    )
+    _register_routes(app)
+    _mount_frontend(app, settings)
+    return app</pre></div><button class="expand-btn">Show more</button></div></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-42-29-929Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-42-29-929Z" class="timestamp-link"><time datetime="2026-08-31T00:42:29.929Z" data-timestamp="2026-08-31T00:42:29.929Z">2026-08-31T00:42:29.929Z</time></a></div><div class="message-content">
+<div class="thinking"><div class="thinking-label">Thinking</div></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-42-44-052Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-42-44-052Z" class="timestamp-link"><time datetime="2026-08-31T00:42:44.052Z" data-timestamp="2026-08-31T00:42:44.052Z">2026-08-31T00:42:44.052Z</time></a></div><div class="message-content">
+<div class="assistant-text"><p>Names first — two of the three you asked about are slightly off. The actual settings (<code>config.py:53-68</code>) are <code>DATAQ_USERS</code>, <code>DATAQ_AUTH_TOKEN</code> (+ the <code>DATAQ_REQUIRE_AUTH</code> catch), and <code>ANTHROPIC_API_KEY</code> <em>or</em> <code>DATAQ_ANTHROPIC_API_KEY</code> — both spellings are read via <code>AliasChoices</code>.</p>
+<h2>Local</h2>
+<p>Auth is entirely optional and off unless you ask for it. <code>app.py:79</code> only installs the middleware if <code>auth_token</code> or <code>users</code> or <code>require_auth</code> is set — so with none of them, there's no login screen and no bearer token. That's the intended laptop setup.</p>
+<p>If you <em>do</em> want to exercise the login flow locally, set <code>DATAQ_USERS</code>:</p>
+<pre><code class="language-bash">cd backend &amp;&amp; uv run python -m dataq.api.newuser alice   # prints alice:scrypt$...
+</code></pre>
+<p>Then either export it, or put it in a <code>.env</code> file. <strong>The <code>.env</code> has to be at <code>backend/.env</code>, not the repo root</strong> — <code>Settings</code> uses <code>env_file=".env"</code> resolved against CWD, and <code>make dev-api</code> runs <code>uv --directory backend</code>, so the process CWD is <code>backend/</code>. (That's also why <code>backend/data/</code> exists alongside <code>data/</code>.) The root <code>.env.example</code> is a template for Docker/Railway, not something the dev server picks up. Copy it to <code>backend/.env</code> if you want it read.</p>
+<pre><code class="language-bash"># backend/.env
+DATAQ_USERS=alice:scrypt$...       # replaces the built-in `dmitry` account, doesn't merge
+ANTHROPIC_API_KEY=sk-ant-...       # bare name is fine
+</code></pre>
+<p>Leave <code>DATAQ_AUTH_TOKEN</code> and <code>DATAQ_REQUIRE_AUTH</code> unset locally. Without a key the agent raises at <code>services/agent.py:334</code>; LLM plugins fall back to the deterministic fake client, so everything else runs.</p>
+<h2>Railway</h2>
+<p>All three go in Service → Variables (never a file — the image has no <code>.env</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DATAQ_USERS</code></td>
+<td><code>alice:scrypt$...,bob:scrypt$...</code> — generate each with <code>newuser</code>, commas or newlines between</td>
+</tr>
+<tr>
+<td><code>DATAQ_AUTH_TOKEN</code></td>
+<td><code>python3 -c "import secrets; print(secrets.token_urlsafe(32))"</code></td>
+</tr>
+<tr>
+<td><code>DATAQ_REQUIRE_AUTH</code></td>
+<td><code>true</code></td>
+</tr>
+<tr>
+<td><code>DATAQ_ANTHROPIC_API_KEY</code></td>
+<td><code>sk-ant-…</code></td>
+</tr>
+</tbody>
+</table>
+<p>You need at least one of <code>DATAQ_USERS</code> / <code>DATAQ_AUTH_TOKEN</code> — <code>check_settings</code> (<code>auth.py:47</code>) refuses to start with <code>REQUIRE_AUTH</code> and neither, and the built-in <code>dmitry</code> account deliberately doesn't satisfy it since its hash is committed. In practice set both: <code>DATAQ_USERS</code> is what people type into the browser, <code>DATAQ_AUTH_TOKEN</code> is what <code>curl</code> and the deploy scripts carry. Either credential passes the middleware.</p>
+<p>Also still needed there: <code>DATAQ_BROWSE_ROOTS=/data/uploads</code> and <code>DATAQ_STORAGE=parquet</code>. <code>DATAQ_DATA_DIR=/data</code> is baked into the image.</p>
+<p>Two doc inaccuracies I noticed while checking, if you want them fixed: <code>docs/DEPLOY.md:89-93</code> and README's Railway step 2 both predate accounts — the table omits <code>DATAQ_USERS</code> and <code>DEPLOY.md:152</code> still says "The app has no user accounts."</p></div></div></div>
+<div class="message user" id="msg-2026-08-31T00-45-07-112Z"><div class="message-header"><span class="role-label">User</span><a href="#msg-2026-08-31T00-45-07-112Z" class="timestamp-link"><time datetime="2026-08-31T00:45:07.112Z" data-timestamp="2026-08-31T00:45:07.112Z">2026-08-31T00:45:07.112Z</time></a></div><div class="message-content">
+<div class="user-content"><p>what doy ou mean by 'Service -&gt; Variables', is this in the railway UI. how does the code access it and does it need a restart</p></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-45-12-313Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-45-12-313Z" class="timestamp-link"><time datetime="2026-08-31T00:45:12.313Z" data-timestamp="2026-08-31T00:45:12.313Z">2026-08-31T00:45:12.313Z</time></a></div><div class="message-content">
+<div class="thinking"><div class="thinking-label">Thinking</div></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-45-13-021Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-45-13-021Z" class="timestamp-link"><time datetime="2026-08-31T00:45:13.021Z" data-timestamp="2026-08-31T00:45:13.021Z">2026-08-31T00:45:13.021Z</time></a></div><div class="message-content">
+<div class="assistant-text"><p>Yes — the Railway dashboard: click your service, then the <strong>Variables</strong> tab (next to Deployments / Metrics / Settings). Same thing from the CLI:</p></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-45-14-233Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-45-14-233Z" class="timestamp-link"><time datetime="2026-08-31T00:45:14.233Z" data-timestamp="2026-08-31T00:45:14.233Z">2026-08-31T00:45:14.233Z</time></a></div><div class="message-content">
+<div class="tool-use bash-tool" data-tool-id="toolu_017fh4ahv8jk2sD7wDMgPkde">
+<div class="tool-header"><span class="tool-icon">$</span> Bash</div><div class="truncatable"><div class="truncatable-content"><pre class="bash-command">grep -rn &#34;get_settings\|Settings()&#34; backend/src/dataq/api/app.py | head -20; echo &#34;=== cache_clear anywhere? ===&#34;; grep -rn &#34;cache_clear\|os.environ&#34; backend/src/dataq --include=&#34;*.py&#34; | head -20</pre></div><button class="expand-btn">Show more</button></div>
+</div></div></div>
+<div class="message tool-reply" id="msg-2026-08-31T00-45-14-307Z"><div class="message-header"><span class="role-label">Tool reply</span><a href="#msg-2026-08-31T00-45-14-307Z" class="timestamp-link"><time datetime="2026-08-31T00:45:14.307Z" data-timestamp="2026-08-31T00:45:14.307Z">2026-08-31T00:45:14.307Z</time></a></div><div class="message-content"><div class="tool-result"><div class="truncatable"><div class="truncatable-content"><pre>backend/src/dataq/api/app.py:25:from ..config import get_settings
+backend/src/dataq/api/app.py:57:    settings = get_settings()
+backend/src/dataq/api/app.py:72:    settings = ctx.settings if ctx is not None else get_settings()
+=== cache_clear anywhere? ===</pre></div><button class="expand-btn">Show more</button></div></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-45-18-095Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-45-18-095Z" class="timestamp-link"><time datetime="2026-08-31T00:45:18.095Z" data-timestamp="2026-08-31T00:45:18.095Z">2026-08-31T00:45:18.095Z</time></a></div><div class="message-content">
+<div class="thinking"><div class="thinking-label">Thinking</div></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-45-18-165Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-45-18-165Z" class="timestamp-link"><time datetime="2026-08-31T00:45:18.165Z" data-timestamp="2026-08-31T00:45:18.165Z">2026-08-31T00:45:18.165Z</time></a></div><div class="message-content">
+<div class="tool-use bash-tool" data-tool-id="toolu_01HPDxgJveS8NSKihFx3jXXY">
+<div class="tool-header"><span class="tool-icon">$</span> Bash</div><div class="truncatable"><div class="truncatable-content"><pre class="bash-command">command -v railway &amp;&amp; railway variables --help 2&gt;&amp;1 | head -30</pre></div><button class="expand-btn">Show more</button></div>
+</div></div></div>
+<div class="message tool-reply" id="msg-2026-08-31T00-45-19-580Z"><div class="message-header"><span class="role-label">Tool reply</span><a href="#msg-2026-08-31T00-45-19-580Z" class="timestamp-link"><time datetime="2026-08-31T00:45:19.580Z" data-timestamp="2026-08-31T00:45:19.580Z">2026-08-31T00:45:19.580Z</time></a></div><div class="message-content"><div class="tool-result"><div class="truncatable"><div class="truncatable-content"><pre>/opt/homebrew/bin/railway
+Manage environment variables for a service
+
+Usage: railway variable [OPTIONS] [COMMAND]
+
+Commands:
+  list    List variables for a service [aliases: ls]
+  set     Set a variable
+  delete  Delete a variable [aliases: rm, remove]
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -s, --service &lt;SERVICE&gt;          The service to show/set variables for
+  -e, --environment &lt;ENVIRONMENT&gt;  The environment to show/set variables for
+  -p, --project &lt;PROJECT_ID&gt;       Project ID to use (defaults to linked project)
+  -k, --kv                         Show variables in KV format. This prints raw values
+      --set &lt;SET&gt;                  The &quot;{key}={value}&quot; environment variable pair to set the service variables (legacy, use &#x27;variable set&#x27; instead)
+      --set-from-stdin &lt;KEY&gt;       Set a variable with the value read from stdin (legacy, use &#x27;variable set --stdin&#x27; instead)
+      --json                       Output in JSON format. Variable list JSON includes raw values
+      --skip-deploys               Skip triggering deploys when setting variables
+  -h, --help                       Print help
+  -V, --version                    Print version
+
+Examples:
+
+  railway variable list --service api --json
+  railway variable list --service api --kv
+  railway variable set API_URL=https://example.com --skip-deploys --json
+  echo &quot;secret&quot; | railway variable set API_KEY --stdin --skip-deploys --json
+  railway variable delete API_KEY --service api --json</pre></div><button class="expand-btn">Show more</button></div></div></div></div>
+<div class="message assistant" id="msg-2026-08-31T00-45-33-221Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-08-31T00-45-33-221Z" class="timestamp-link"><time datetime="2026-08-31T00:45:33.221Z" data-timestamp="2026-08-31T00:45:33.221Z">2026-08-31T00:45:33.221Z</time></a></div><div class="message-content">
+<div class="assistant-text"><pre><code class="language-bash">railway variable set DATAQ_REQUIRE_AUTH=true
+echo 'sk-ant-...' | railway variable set DATAQ_ANTHROPIC_API_KEY --stdin   # keeps it out of shell history
+railway variable list --kv
+</code></pre>
+<p>Note the <code>--skip-deploys</code> flag in that help text — its existence tells you the default is the opposite: setting a variable triggers a deploy. The dashboard behaves the same way; edits are staged and an "Apply changes" button redeploys the service.</p>
+<h2>How the code reads them</h2>
+<p>Railway injects the variables into the container's environment, and nothing in this repo reads them directly — <code>Settings</code> is a pydantic-settings <code>BaseSettings</code> with <code>env_prefix="DATAQ_"</code> (<code>config.py:16</code>), so each field name maps to <code>DATAQ_&lt;FIELD&gt;</code> in <code>os.environ</code> automatically. <code>users: str | None</code> becomes <code>DATAQ_USERS</code>, <code>auth_token</code> becomes <code>DATAQ_AUTH_TOKEN</code>. <code>anthropic_api_key</code> is the one exception — its explicit <code>AliasChoices</code> means the prefix isn't applied and both <code>DATAQ_ANTHROPIC_API_KEY</code> and bare <code>ANTHROPIC_API_KEY</code> work.</p>
+<h2>Restart: yes, required</h2>
+<p>The environment is read exactly once, at process start:</p>
+<ul>
+<li><code>get_settings()</code> is <code>@lru_cache</code>d (<code>config.py:121</code>), so <code>Settings()</code> — and therefore every <code>os.environ</code> lookup — happens on the first call and never again. Nothing in the codebase calls <code>cache_clear()</code>.</li>
+<li>The values are then consumed at app-construction time, not per-request: <code>check_settings(settings)</code> at <code>app.py:74</code> and the <code>add_middleware</code> call at <code>app.py:79-83</code>, which captures the token and the session-signing secret into the middleware instance.</li>
+</ul>
+<p>So changing <code>DATAQ_AUTH_TOKEN</code> on a live process would have no effect at all, and adding <code>DATAQ_USERS</code> to an instance that started with none wouldn't even install the auth middleware — the <code>if</code> at line 79 already ran. You get a new process either way on Railway, so this only bites you locally: <code>make dev-api</code> has <code>--reload</code>, but that watches Python files, not your <code>backend/.env</code>. Edit the env file, then Ctrl-C and restart.</p>
+<p>One consequence worth knowing for the restart: sessions survive it. <code>session_secret()</code> persists the key to <code>data_dir/session_secret</code> on first use rather than generating it per process, so a redeploy doesn't sign everyone out — as long as <code>/data</code> is a mounted volume. Changing <code>DATAQ_USERS</code> doesn't invalidate existing sessions either; a removed user keeps their token until it expires (<code>DATAQ_SESSION_HOURS</code>, 2 weeks). To actually revoke someone immediately, set <code>DATAQ_SESSION_SECRET</code> to a new value, which invalidates every session at once.</p></div></div></div>
+        
+
+<div class="pagination">
+<a href="index.html" class="index-link">Index</a>
+<span class="disabled">&larr; Prev</span>
+<span class="current">1</span>
+<a href="page-002.html">2</a>
+<a href="page-003.html">3</a>
+<a href="page-002.html">Next &rarr;</a>
+</div>
+
+    </div>
+    <script>
+document.querySelectorAll('time[data-timestamp]').forEach(function(el) {
+    const timestamp = el.getAttribute('data-timestamp');
+    const date = new Date(timestamp);
+    const now = new Date();
+    const isToday = date.toDateString() === now.toDateString();
+    const timeStr = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    if (isToday) { el.textContent = timeStr; }
+    else { el.textContent = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + timeStr; }
+});
+document.querySelectorAll('pre.json').forEach(function(el) {
+    let text = el.textContent;
+    text = text.replace(/"([^"]+)":/g, '<span style="color: #ce93d8">"$1"</span>:');
+    text = text.replace(/: "([^"]*)"/g, ': <span style="color: #81d4fa">"$1"</span>');
+    text = text.replace(/: (\d+)/g, ': <span style="color: #ffcc80">$1</span>');
+    text = text.replace(/: (true|false|null)/g, ': <span style="color: #f48fb1">$1</span>');
+    el.innerHTML = text;
+});
+document.querySelectorAll('.truncatable').forEach(function(wrapper) {
+    const content = wrapper.querySelector('.truncatable-content');
+    const btn = wrapper.querySelector('.expand-btn');
+    if (content.scrollHeight > 250) {
+        wrapper.classList.add('truncated');
+        btn.addEventListener('click', function() {
+            if (wrapper.classList.contains('truncated')) { wrapper.classList.remove('truncated'); wrapper.classList.add('expanded'); btn.textContent = 'Show less'; }
+            else { wrapper.classList.remove('expanded'); wrapper.classList.add('truncated'); btn.textContent = 'Show more'; }
+        });
+    }
+});
+</script>
+</body>
+</html>

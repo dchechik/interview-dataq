@@ -13,6 +13,9 @@ frontend/dist/
 
 # Data & secrets
 data/
+data_old*/
+data-from-railway/
+dataq-data*.tgz
 *.duckdb
 *.duckdb.wal
 *.sqlite
